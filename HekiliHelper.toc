@@ -1,0 +1,12 @@
+## Interface: 30400
+## Title: Hekili Helper
+## Notes: Helper addon for Hekili rotation helper
+## Notes-zhCN: Hekili 辅助插件
+## Author: YourName
+## Version: 1.0.0
+## Dependencies: Hekili
+## OptionalDeps: LibRangeCheck-2.0
+
+HekiliHelper.lua
+Modules/MeleeTargetIndicator.lua
+
