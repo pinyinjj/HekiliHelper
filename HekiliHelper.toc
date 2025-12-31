@@ -2,7 +2,7 @@
 ## Title: Hekili Helper
 ## Notes: Helper addon for Hekili rotation helper
 ## Notes-zhCN: Hekili 辅助插件
-## Author: YourName
+## Author: qq914640123
 ## Version: 1.0.0
 ## Dependencies: Hekili
 ## OptionalDeps: LibRangeCheck-2.0

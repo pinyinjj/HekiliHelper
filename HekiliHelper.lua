@@ -9,6 +9,16 @@ _G.HekiliHelper = HekiliHelper
 
 HekiliHelper.Version = "1.0.0"
 
+-- 调试开关配置（默认关闭）
+HekiliHelper.DebugEnabled = false
+
+-- 调试打印函数（只有在DebugEnabled为true时才打印）
+function HekiliHelper:DebugPrint(message)
+    if self.DebugEnabled then
+        self:Print(message)
+    end
+end
+
 -- 检查Hekili是否已加载
 local function CheckHekiliLoaded()
     if not Hekili then
@@ -26,17 +36,21 @@ end
 function HekiliHelper:OnInitialize()
     self:Print("|cFF00FF00[HekiliHelper]|r 插件已加载，版本 " .. self.Version)
     
+    -- 注册控制台命令
+    self:RegisterChatCommand("hhdebug", "ToggleDebug")
+    self:RegisterChatCommand("hekilihelperdebug", "ToggleDebug")
+    
     -- 创建模块对象（如果模块文件已加载）
     if not self.MeleeTargetIndicator then
         self.MeleeTargetIndicator = {}
-        self:Print("|cFF00FF00[HekiliHelper]|r 创建MeleeTargetIndicator模块对象")
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r 创建MeleeTargetIndicator模块对象")
     else
-        self:Print("|cFF00FF00[HekiliHelper]|r MeleeTargetIndicator模块对象已存在")
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r MeleeTargetIndicator模块对象已存在")
     end
 end
 
 function HekiliHelper:OnEnable()
-    self:Print("|cFF00FF00[HekiliHelper]|r 插件已启用，等待Hekili加载...")
+    self:DebugPrint("|cFF00FF00[HekiliHelper]|r 插件已启用，等待Hekili加载...")
     
     -- 使用定时器检查Hekili是否已加载（因为ADDON_LOADED事件可能已经触发）
     local checkCount = 0
@@ -46,7 +60,7 @@ function HekiliHelper:OnEnable()
         checkCount = checkCount + 1
         
         if CheckHekiliLoaded() then
-            self:Print("|cFF00FF00[HekiliHelper]|r 检测到Hekili已加载，初始化模块...")
+            self:DebugPrint("|cFF00FF00[HekiliHelper]|r 检测到Hekili已加载，初始化模块...")
             self:InitializeModules()
         elseif checkCount < maxChecks then
             -- 继续等待
@@ -65,6 +79,16 @@ function HekiliHelper:OnDisable()
     -- 插件禁用时的逻辑
 end
 
+-- 切换调试开关的控制台命令
+function HekiliHelper:ToggleDebug(input)
+    self.DebugEnabled = not self.DebugEnabled
+    if self.DebugEnabled then
+        self:Print("|cFF00FF00[HekiliHelper]|r 调试模式已开启")
+    else
+        self:Print("|cFF00FF00[HekiliHelper]|r 调试模式已关闭")
+    end
+end
+
 -- 初始化所有模块
 function HekiliHelper:InitializeModules()
     if not CheckHekiliLoaded() then
@@ -80,8 +104,8 @@ function HekiliHelper:InitializeModules()
         return
     end
     
-    self:Print("|cFF00FF00[HekiliHelper]|r 正在初始化模块...")
-    self:Print("|cFF00FF00[HekiliHelper]|r Hekili.Update存在: " .. (Hekili.Update and "是" or "否"))
+    self:DebugPrint("|cFF00FF00[HekiliHelper]|r 正在初始化模块...")
+    self:DebugPrint("|cFF00FF00[HekiliHelper]|r Hekili.Update存在: " .. (Hekili.Update and "是" or "否"))
     
     -- 检查模块是否存在
     if not self.MeleeTargetIndicator then
@@ -89,12 +113,12 @@ function HekiliHelper:InitializeModules()
         return
     end
     
-    self:Print("|cFF00FF00[HekiliHelper]|r 找到MeleeTargetIndicator模块，开始初始化...")
+    self:DebugPrint("|cFF00FF00[HekiliHelper]|r 找到MeleeTargetIndicator模块，开始初始化...")
     
     -- 加载模块
     local success = self.MeleeTargetIndicator:Initialize()
     if success then
-        self:Print("|cFF00FF00[HekiliHelper]|r 模块初始化成功")
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r 模块初始化成功")
     else
         self:Print("|cFFFF0000[HekiliHelper]|r 模块初始化失败")
     end
