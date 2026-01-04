@@ -9,4 +9,5 @@
 
 HekiliHelper.lua
 Modules/MeleeTargetIndicator.lua
+Modules/HealingShamanSkills.lua
 

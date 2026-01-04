@@ -47,6 +47,13 @@ function HekiliHelper:OnInitialize()
     else
         self:DebugPrint("|cFF00FF00[HekiliHelper]|r MeleeTargetIndicator模块对象已存在")
     end
+    
+    if not self.HealingShamanSkills then
+        self.HealingShamanSkills = {}
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r 创建HealingShamanSkills模块对象")
+    else
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r HealingShamanSkills模块对象已存在")
+    end
 end
 
 function HekiliHelper:OnEnable()
@@ -107,20 +114,29 @@ function HekiliHelper:InitializeModules()
     self:DebugPrint("|cFF00FF00[HekiliHelper]|r 正在初始化模块...")
     self:DebugPrint("|cFF00FF00[HekiliHelper]|r Hekili.Update存在: " .. (Hekili.Update and "是" or "否"))
     
-    -- 检查模块是否存在
-    if not self.MeleeTargetIndicator then
+    -- 检查模块是否存在并初始化
+    if self.MeleeTargetIndicator then
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r 找到MeleeTargetIndicator模块，开始初始化...")
+        local success = self.MeleeTargetIndicator:Initialize()
+        if success then
+            self:DebugPrint("|cFF00FF00[HekiliHelper]|r MeleeTargetIndicator模块初始化成功")
+        else
+            self:Print("|cFFFF0000[HekiliHelper]|r MeleeTargetIndicator模块初始化失败")
+        end
+    else
         self:Print("|cFFFF0000[HekiliHelper]|r 错误: MeleeTargetIndicator模块未找到")
-        return
     end
     
-    self:DebugPrint("|cFF00FF00[HekiliHelper]|r 找到MeleeTargetIndicator模块，开始初始化...")
-    
-    -- 加载模块
-    local success = self.MeleeTargetIndicator:Initialize()
-    if success then
-        self:DebugPrint("|cFF00FF00[HekiliHelper]|r 模块初始化成功")
+    if self.HealingShamanSkills then
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r 找到HealingShamanSkills模块，开始初始化...")
+        local success = self.HealingShamanSkills:Initialize()
+        if success then
+            self:DebugPrint("|cFF00FF00[HekiliHelper]|r HealingShamanSkills模块初始化成功")
+        else
+            self:Print("|cFFFF0000[HekiliHelper]|r HealingShamanSkills模块初始化失败")
+        end
     else
-        self:Print("|cFFFF0000[HekiliHelper]|r 模块初始化失败")
+        self:DebugPrint("|cFFFF0000[HekiliHelper]|r 警告: HealingShamanSkills模块未找到（可能未加载）")
     end
 end
 
