@@ -149,6 +149,13 @@ Module.SkillDefinitions = {
         displayName = "激流"
     },
     {
+        actionName = "tide_force",
+        spellID = 55198,
+        priority = 4.5,
+        checkFunc = function(self) return self:CheckTideForce() end,
+        displayName = "潮汐之力"
+    },
+    {
         actionName = "chain_heal",
         spellID = 49273,
         priority = 5,
@@ -211,6 +218,13 @@ Module.SkillDefinitions = {
         checkFunc = function(self) return self:CheckWindShear() end,
         displayName = "风剪"
     },
+    {
+        actionName = "mana_tide_totem",
+        spellID = 16190,
+        priority = 14,
+        checkFunc = function(self) return self:CheckManaTideTotem() end,
+        displayName = "法力之潮图腾"
+    },
 }
 
 -- ============================================
@@ -219,15 +233,24 @@ Module.SkillDefinitions = {
 
 -- 治疗链判断
 function Module:CheckChainHeal()
+    -- 检查模块是否启用
+    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
+    if not db or not db.healingShaman or db.healingShaman.enabled == false then
+        return false, nil
+    end
+    
     -- 检查鼠标悬停目标或当前选中目标
     local targetUnit = nil
     
     -- 优先检查鼠标悬停目标
-    if UnitExists("mouseover") and UnitIsFriend("player", "mouseover") then
+    if self:IsValidHealingTarget("mouseover") then
         targetUnit = "mouseover"
     -- 其次检查当前选中目标
-    elseif UnitExists("target") and UnitIsFriend("player", "target") then
+    elseif self:IsValidHealingTarget("target") then
         targetUnit = "target"
+    -- 兜底：检查焦点目标
+    elseif self:IsValidHealingTarget("focus") then
+        targetUnit = "focus"
     end
     
     -- 如果没有有效的目标，返回false
@@ -273,9 +296,13 @@ function Module:CheckChainHeal()
         return false, nil
     end
     
-    -- 检查目标是否损失10%血量（即当前血量 <= 90%）
+    -- 读取配置中的治疗链触发阈值
+    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
+    local threshold = (db and db.healingShaman and db.healingShaman.chainHealThreshold) or 90
+    
+    -- 检查目标剩余血量是否低于阈值
     local targetHealthPercent = self:GetUnitHealthPercent(targetUnit)
-    if targetHealthPercent > 90 then
+    if targetHealthPercent > threshold then
         return false, nil
     end
     
@@ -286,15 +313,15 @@ function Module:CheckChainHeal()
     if targetGroup and targetPosition then
         local injuredInSameGroup = 0
         
-        -- 遍历所有团队成员
+                -- 遍历所有团队成员
         if IsInRaid() then
             for i = 1, 40 do
                 local unit = "raid" .. i
-                if UnitExists(unit) and not UnitIsDead(unit) and UnitInPhase(unit) then
+                if self:IsValidHealingTarget(unit) and UnitInPhase(unit) then
                     local group, position = self:GetGroupPosition(unit)
                     if group == targetGroup and not UnitIsUnit(unit, targetUnit) then
                         local healthPercent = self:GetUnitHealthPercent(unit)
-                        if healthPercent <= 90 then
+                        if healthPercent <= threshold then
                             injuredInSameGroup = injuredInSameGroup + 1
                         end
                     end
@@ -306,9 +333,9 @@ function Module:CheckChainHeal()
                 -- 目标是玩家，检查其他小队成员
                 for i = 1, 4 do
                     local unit = "party" .. i
-                    if UnitExists(unit) and not UnitIsDead(unit) and UnitInPhase(unit) then
+                    if self:IsValidHealingTarget(unit) and UnitInPhase(unit) then
                         local healthPercent = self:GetUnitHealthPercent(unit)
-                        if healthPercent <= 90 then
+                        if healthPercent <= threshold then
                             injuredInSameGroup = injuredInSameGroup + 1
                         end
                     end
@@ -316,14 +343,14 @@ function Module:CheckChainHeal()
             else
                 -- 目标是其他小队成员，检查玩家和其他成员
                 local playerHealth = self:GetUnitHealthPercent("player")
-                if playerHealth <= 90 then
+                if playerHealth <= threshold then
                     injuredInSameGroup = injuredInSameGroup + 1
                 end
                 for i = 1, 4 do
                     local unit = "party" .. i
-                    if UnitExists(unit) and not UnitIsUnit(unit, targetUnit) and not UnitIsDead(unit) and UnitInPhase(unit) then
+                    if self:IsValidHealingTarget(unit) and not UnitIsUnit(unit, targetUnit) and UnitInPhase(unit) then
                         local healthPercent = self:GetUnitHealthPercent(unit)
-                        if healthPercent <= 90 then
+                        if healthPercent <= threshold then
                             injuredInSameGroup = injuredInSameGroup + 1
                         end
                     end
@@ -342,15 +369,15 @@ function Module:CheckChainHeal()
     if targetClassType then
         local injuredSameType = 0
         
-        -- 遍历所有团队成员
+                -- 遍历所有团队成员
         if IsInRaid() then
             for i = 1, 40 do
                 local unit = "raid" .. i
-                if UnitExists(unit) and not UnitIsDead(unit) and UnitInPhase(unit) then
+                if self:IsValidHealingTarget(unit) and UnitInPhase(unit) then
                     local classType = self:GetClassType(unit)
                     if classType == targetClassType then
                         local healthPercent = self:GetUnitHealthPercent(unit)
-                        if healthPercent <= 90 then
+                        if healthPercent <= threshold then
                             injuredSameType = injuredSameType + 1
                         end
                     end
@@ -362,18 +389,18 @@ function Module:CheckChainHeal()
             local playerClassType = self:GetClassType("player")
             if playerClassType == targetClassType then
                 local playerHealth = self:GetUnitHealthPercent("player")
-                if playerHealth <= 90 then
+                if playerHealth <= threshold then
                     injuredSameType = injuredSameType + 1
                 end
             end
             -- 检查其他小队成员
             for i = 1, 4 do
                 local unit = "party" .. i
-                if UnitExists(unit) and not UnitIsDead(unit) and UnitInPhase(unit) then
+                if self:IsValidHealingTarget(unit) and UnitInPhase(unit) then
                     local classType = self:GetClassType(unit)
                     if classType == targetClassType then
                         local healthPercent = self:GetUnitHealthPercent(unit)
-                        if healthPercent <= 90 then
+                        if healthPercent <= threshold then
                             injuredSameType = injuredSameType + 1
                         end
                     end
@@ -392,15 +419,24 @@ end
 
 -- 治疗波判断
 function Module:CheckHealingWave()
+    -- 检查模块是否启用
+    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
+    if not db or not db.healingShaman or db.healingShaman.enabled == false then
+        return false, nil
+    end
+    
     -- 检查鼠标悬停目标或当前选中目标
     local targetUnit = nil
     
     -- 优先检查鼠标悬停目标
-    if UnitExists("mouseover") and UnitIsFriend("player", "mouseover") then
+    if self:IsValidHealingTarget("mouseover") then
         targetUnit = "mouseover"
     -- 其次检查当前选中目标
-    elseif UnitExists("target") and UnitIsFriend("player", "target") then
+    elseif self:IsValidHealingTarget("target") then
         targetUnit = "target"
+    -- 兜底：检查焦点目标
+    elseif self:IsValidHealingTarget("focus") then
+        targetUnit = "focus"
     end
     
     -- 如果没有有效的目标，返回false
@@ -408,14 +444,13 @@ function Module:CheckHealingWave()
         return false, nil
     end
     
-    -- 检查目标是否死亡
-    if UnitIsDead(targetUnit) then
-        return false, nil
-    end
+    -- 读取配置中的治疗波触发阈值
+    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
+    local threshold = (db and db.healingShaman and db.healingShaman.healingWaveThreshold) or 30
     
-    -- 检查目标是否损失70%血量（即当前血量 <= 30%）
+    -- 检查目标剩余血量是否低于阈值
     local targetHealthPercent = self:GetUnitHealthPercent(targetUnit)
-    if targetHealthPercent <= 30 then
+    if targetHealthPercent <= threshold then
         return true, targetUnit
     end
     
@@ -424,15 +459,24 @@ end
 
 -- 次级治疗波判断
 function Module:CheckLesserHealingWave()
+    -- 检查模块是否启用
+    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
+    if not db or not db.healingShaman or db.healingShaman.enabled == false then
+        return false, nil
+    end
+    
     -- 检查鼠标悬停目标或当前选中目标
     local targetUnit = nil
     
     -- 优先检查鼠标悬停目标
-    if UnitExists("mouseover") and UnitIsFriend("player", "mouseover") then
+    if self:IsValidHealingTarget("mouseover") then
         targetUnit = "mouseover"
     -- 其次检查当前选中目标
-    elseif UnitExists("target") and UnitIsFriend("player", "target") then
+    elseif self:IsValidHealingTarget("target") then
         targetUnit = "target"
+    -- 兜底：检查焦点目标
+    elseif self:IsValidHealingTarget("focus") then
+        targetUnit = "focus"
     end
     
     -- 如果没有有效的目标，返回false
@@ -440,32 +484,122 @@ function Module:CheckLesserHealingWave()
         return false, nil
     end
     
-    -- 检查目标是否死亡
-    if UnitIsDead(targetUnit) then
-        return false, nil
-    end
+    -- 读取配置中的次级治疗波触发阈值
+    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
+    local threshold = (db and db.healingShaman and db.healingShaman.lesserHealingWaveThreshold) or 90
     
-    -- 检查目标是否损失10%血量（即当前血量 <= 90%）
+    -- 检查目标剩余血量是否低于阈值
     local targetHealthPercent = self:GetUnitHealthPercent(targetUnit)
-    if targetHealthPercent > 90 then
+    if targetHealthPercent > threshold then
         return false, nil
     end
     
-    -- 放宽条件：只要目标损失10%以上就返回true（移除小队其他成员满血的限制）
+    -- 只要目标剩余血量低于阈值就返回true
     return true, targetUnit
+end
+
+-- 潮汐之力判断
+function Module:CheckTideForce()
+    -- 检查模块是否启用
+    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
+    if not db or not db.healingShaman or db.healingShaman.enabled == false then
+        return false, nil
+    end
+    
+    -- 检查是否学习了技能
+    local tideForceSpellID = 55198
+    if IsSpellKnown and not IsSpellKnown(tideForceSpellID) then
+        return false, nil
+    end
+    
+    -- 读取配置中的潮汐之力触发阈值
+    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
+    local threshold = (db and db.healingShaman and db.healingShaman.tideForceThreshold) or 50
+    
+    -- 检查是否在团队中
+    if IsInRaid() then
+        -- 团队状态：1/3以上成员生命值低于阈值
+        local totalMembers = 0
+        local injuredMembers = 0
+        
+        -- 统计团队成员（包括玩家自己）
+        for i = 1, 40 do
+            local unit = "raid" .. i
+            if UnitExists(unit) and self:IsValidHealingTarget(unit) and UnitInPhase(unit) then
+                totalMembers = totalMembers + 1
+                local healthPercent = self:GetUnitHealthPercent(unit)
+                if healthPercent < threshold then
+                    injuredMembers = injuredMembers + 1
+                end
+            end
+        end
+        
+        -- 计算需要的最低受伤人数（1/3以上，向上取整）
+        if totalMembers > 0 then
+            local requiredInjured = math.ceil(totalMembers / 3)
+            if injuredMembers >= requiredInjured then
+                return true, "player"
+            end
+        end
+    elseif IsInGroup() then
+        -- 小队状态（不在团队中）：一半以上成员生命值低于阈值
+        local totalMembers = 0
+        local injuredMembers = 0
+        
+        -- 统计玩家自己
+        if self:IsValidHealingTarget("player") then
+            totalMembers = totalMembers + 1
+            local healthPercent = self:GetUnitHealthPercent("player")
+            if healthPercent < threshold then
+                injuredMembers = injuredMembers + 1
+            end
+        end
+        
+        -- 统计小队成员
+        for i = 1, 4 do
+            local unit = "party" .. i
+            if self:IsValidHealingTarget(unit) and UnitInPhase(unit) then
+                totalMembers = totalMembers + 1
+                local healthPercent = self:GetUnitHealthPercent(unit)
+                if healthPercent < threshold then
+                    injuredMembers = injuredMembers + 1
+                end
+            end
+        end
+        
+        -- 计算需要的最低受伤人数（一半以上，超过一半）
+        -- 例如：5人需要3人，4人需要3人
+        if totalMembers > 0 then
+            local requiredInjured = math.floor(totalMembers / 2) + 1
+            if injuredMembers >= requiredInjured then
+                return true, "player"
+            end
+        end
+    end
+    
+    return false, nil
 end
 
 -- 激流判断
 function Module:CheckRiptide()
+    -- 检查模块是否启用
+    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
+    if not db or not db.healingShaman or db.healingShaman.enabled == false then
+        return false, nil
+    end
+    
     -- 检查鼠标悬停目标或当前选中目标
     local targetUnit = nil
     
     -- 优先检查鼠标悬停目标
-    if UnitExists("mouseover") and UnitIsFriend("player", "mouseover") then
+    if self:IsValidHealingTarget("mouseover") then
         targetUnit = "mouseover"
     -- 其次检查当前选中目标
-    elseif UnitExists("target") and UnitIsFriend("player", "target") then
+    elseif self:IsValidHealingTarget("target") then
         targetUnit = "target"
+    -- 兜底：检查焦点目标
+    elseif self:IsValidHealingTarget("focus") then
+        targetUnit = "focus"
     end
     
     -- 如果没有有效的目标，返回false
@@ -473,14 +607,13 @@ function Module:CheckRiptide()
         return false, nil
     end
     
-    -- 检查目标是否死亡
-    if UnitIsDead(targetUnit) then
-        return false, nil
-    end
+    -- 读取配置中的激流触发阈值
+    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
+    local threshold = (db and db.healingShaman and db.healingShaman.riptideThreshold) or 99
     
-    -- 检查目标是否满血
+    -- 检查目标剩余血量是否低于阈值
     local targetHealthPercent = self:GetUnitHealthPercent(targetUnit)
-    if targetHealthPercent >= 100 then
+    if targetHealthPercent > threshold then
         return false, nil
     end
     
@@ -513,29 +646,19 @@ end
 
 -- 大地之盾判断
 function Module:CheckEarthShield()
-    -- 检查焦点目标是否存在
+    -- 检查模块是否启用
+    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
+    if not db or not db.healingShaman or db.healingShaman.enabled == false then
+        return false, nil
+    end
+    
+    -- 只有当存在焦点目标时才推荐使用大地之盾
     if not UnitExists("focus") then
         return false, nil
     end
     
-    -- 检查焦点目标是否是友方
-    if not UnitIsFriend("player", "focus") then
-        return false, nil
-    end
-    
-    -- 检查焦点目标是否死亡
-    if UnitIsDead("focus") then
-        return false, nil
-    end
-    
-    -- 检查焦点目标是否可见
-    if not UnitIsVisible("focus") then
-        return false, nil
-    end
-    
-    -- 检查焦点目标是否在40码范围内
-    -- CheckInteractDistance的第二个参数：1=28码，2=11.11码，3=9.9码，4=40码
-    if not CheckInteractDistance("focus", 4) then
+    -- 检查焦点目标是否是有效的治疗目标（友方、存活、在视野范围内）
+    if not self:IsValidHealingTarget("focus") then
         return false, nil
     end
     
@@ -545,6 +668,99 @@ function Module:CheckEarthShield()
     -- 如果没有大地之盾，返回true
     if not hasEarthShield then
         return true, "focus"
+    end
+    
+    return false, nil
+end
+
+-- 法力之潮图腾判断
+function Module:CheckManaTideTotem()
+    -- 检查模块是否启用
+    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
+    if not db or not db.healingShaman or db.healingShaman.enabled == false then
+        return false, nil
+    end
+    
+    local manaTideTotemSpellID = 16190
+    
+    -- 检查是否学习了技能
+    if IsSpellKnown and not IsSpellKnown(manaTideTotemSpellID) then
+        return false, nil
+    end
+    
+    -- 检查自身法力值是否低于50%
+    local currentMana = UnitPower("player", 0) -- 0表示法力值
+    local maxMana = UnitPowerMax("player", 0)
+    if maxMana <= 0 then
+        return false, nil
+    end
+    local manaPercent = currentMana / maxMana
+    if manaPercent >= 0.5 then
+        return false, nil
+    end
+    
+    -- 检查是否已有法力之潮图腾（检查水图腾槽，slot 3）
+    if GetTotemInfo then
+        local haveTotem, totemName, startTime, duration = GetTotemInfo(3)
+        if haveTotem and totemName then
+            -- 检查图腾名称是否包含"法力之潮"或"Mana Tide"
+            if string.find(totemName, "法力之潮") or string.find(totemName, "Mana Tide") then
+                return false, nil
+            end
+        end
+    end
+    
+    -- 检查40码范围内是否有战斗中的boss
+    local RC = LibStub and LibStub("LibRangeCheck-2.0")
+    local hasBossInRange = false
+    
+    -- 检查boss单位（boss1-5）
+    for i = 1, 5 do
+        local unit = "boss" .. i
+        if UnitExists(unit) and UnitCanAttack("player", unit) and not UnitIsDead(unit) then
+            local classification = UnitClassification(unit)
+            -- 检查是否为boss级别（worldboss, rareelite, elite）
+            if (classification == "worldboss" or classification == "rareelite" or classification == "elite") then
+                -- 检查是否在战斗中
+                if UnitAffectingCombat and UnitAffectingCombat(unit) then
+                    -- 检查距离（40码）
+                    if RC then
+                        local minRange, maxRange = RC:GetRange(unit)
+                        if maxRange and maxRange <= 40 then
+                            hasBossInRange = true
+                            break
+                        end
+                    else
+                        -- 如果没有LibRangeCheck，默认认为boss单位在范围内
+                        hasBossInRange = true
+                        break
+                    end
+                end
+            end
+        end
+    end
+    
+    -- 如果还没有找到，检查nameplate单位
+    if not hasBossInRange and RC and Hekili and Hekili.npGUIDs then
+        for unit, guid in pairs(Hekili.npGUIDs) do
+            if unit and type(unit) == "string" and UnitExists(unit) and UnitCanAttack("player", unit) and not UnitIsDead(unit) then
+                local classification = UnitClassification(unit)
+                if (classification == "worldboss" or classification == "rareelite" or classification == "elite") then
+                    if UnitAffectingCombat and UnitAffectingCombat(unit) then
+                        local minRange, maxRange = RC:GetRange(unit)
+                        if maxRange and maxRange <= 40 then
+                            hasBossInRange = true
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    -- 如果找到了战斗中的boss，返回true
+    if hasBossInRange then
+        return true, "player"
     end
     
     return false, nil
@@ -570,6 +786,12 @@ end
 
 -- 水之护盾判断
 function Module:CheckWaterShield()
+    -- 检查模块是否启用
+    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
+    if not db or not db.healingShaman or db.healingShaman.enabled == false then
+        return false, nil
+    end
+    
     -- 检查玩家是否有水之护盾buff
     -- 水之护盾的spellID是57960
     for i = 1, 40 do
@@ -615,6 +837,12 @@ end
 
 -- 大地生命武器判断
 function Module:CheckEarthlivingWeapon()
+    -- 检查模块是否启用
+    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
+    if not db or not db.healingShaman or db.healingShaman.enabled == false then
+        return false, nil
+    end
+    
     -- 检查主手武器是否有大地生命武器的临时附魔
     -- 使用GetWeaponEnchantInfo()检查主手武器的临时附魔ID
     local hasMainHandEnchant, _, _, mainHandEnchantID = GetWeaponEnchantInfo()
@@ -673,6 +901,35 @@ function Module:GetFriendlyUnits()
     end
     
     return units
+end
+
+-- 检查目标是否是有效的治疗目标（友方、存活、在视野范围内）
+function Module:IsValidHealingTarget(unit)
+    if not unit then
+        return false
+    end
+    
+    -- 检查目标是否存在
+    if not UnitExists(unit) then
+        return false
+    end
+    
+    -- 检查目标是否是友方
+    if not UnitIsFriend("player", unit) then
+        return false
+    end
+    
+    -- 检查目标是否死亡
+    if UnitIsDead(unit) then
+        return false
+    end
+    
+    -- 检查目标是否在视野范围内（可见）
+    if not UnitIsVisible(unit) then
+        return false
+    end
+    
+    return true
 end
 
 -- 获取单位血量百分比
@@ -860,6 +1117,12 @@ function Module:InsertHealingSkills()
         return
     end
     
+    -- 检查治疗萨满模块是否启用
+    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
+    if not db or not db.healingShaman or db.healingShaman.enabled == false then
+        return
+    end
+    
     -- 使用Hekili.DisplayPool访问displays对象
     local displays = Hekili.DisplayPool
     if not displays then
@@ -1035,14 +1298,14 @@ function Module:InsertSkillForDisplay(dispName, UI)
     if #skillsToInsert == 0 then
         -- 检查是否有受伤的友方目标
         local targetUnit = nil
-        if UnitExists("mouseover") and UnitIsFriend("player", "mouseover") then
+        if self:IsValidHealingTarget("mouseover") then
             targetUnit = "mouseover"
-        elseif UnitExists("target") and UnitIsFriend("player", "target") then
+        elseif self:IsValidHealingTarget("target") then
             targetUnit = "target"
         end
         
         -- 如果目标存在且受伤，使用次级治疗波作为兜底
-        if targetUnit and not UnitIsDead(targetUnit) then
+        if targetUnit then
             local targetHealthPercent = self:GetUnitHealthPercent(targetUnit)
             if targetHealthPercent < 100 then
                 -- 找到次级治疗波的定义

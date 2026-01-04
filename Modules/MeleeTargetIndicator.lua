@@ -252,8 +252,53 @@ function Module:ShouldShowMeleeIndicator()
 end
 
 -- 插入近战指示器
+-- 移除所有显示中的近战指示器
+function Module:RemoveMeleeIndicator()
+    if not Hekili or not Hekili.DisplayPool then
+        return
+    end
+    
+    local displays = Hekili.DisplayPool
+    for dispName, UI in pairs(displays) do
+        if UI and UI.Recommendations then
+            local Queue = UI.Recommendations
+            for i = 1, 4 do
+                if Queue[i] and Queue[i].isMeleeIndicator then
+                    -- 如果有保存的原始推荐，恢复它
+                    if Queue[i].originalRecommendation then
+                        local original = Queue[i].originalRecommendation
+                        -- 清除当前指示器
+                        for k, v in pairs(Queue[i]) do
+                            Queue[i][k] = nil
+                        end
+                        -- 恢复原始推荐
+                        for k, v in pairs(original) do
+                            Queue[i][k] = v
+                        end
+                    else
+                        -- 没有原始推荐，清除指示器
+                        Queue[i].actionName = nil
+                        Queue[i].actionID = nil
+                        Queue[i].texture = nil
+                        Queue[i].isMeleeIndicator = nil
+                    end
+                    UI.NewRecommendations = true
+                end
+            end
+        end
+    end
+end
+
 function Module:InsertMeleeIndicator()
     if not Hekili then
+        return
+    end
+    
+    -- 检查开关是否启用
+    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
+    if not db or not db.meleeIndicator or db.meleeIndicator.enabled == false then
+        -- 开关关闭，移除已存在的指示器
+        self:RemoveMeleeIndicator()
         return
     end
     

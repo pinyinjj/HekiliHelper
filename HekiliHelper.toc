@@ -6,8 +6,10 @@
 ## Version: 1.0.0
 ## Dependencies: Hekili
 ## OptionalDeps: LibRangeCheck-2.0
+## SavedVariables: HekiliHelperDB
 
 HekiliHelper.lua
+Modules/Options.lua
 Modules/MeleeTargetIndicator.lua
 Modules/HealingShamanSkills.lua
 

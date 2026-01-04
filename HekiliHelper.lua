@@ -36,6 +36,31 @@ end
 function HekiliHelper:OnInitialize()
     self:Print("|cFF00FF00[HekiliHelper]|r 插件已加载，版本 " .. self.Version)
     
+    -- 初始化数据库
+    local defaults = {
+        profile = {
+            enabled = true,
+            debugEnabled = false,
+            meleeIndicator = {
+                enabled = true,
+                checkRange = 5,
+            },
+            healingShaman = {
+                enabled = true,
+                riptideThreshold = 99,
+                tideForceThreshold = 50,
+                chainHealThreshold = 90,
+                healingWaveThreshold = 30,
+                lesserHealingWaveThreshold = 90,
+            },
+        }
+    }
+    
+    self.DB = LibStub("AceDB-3.0"):New("HekiliHelperDB", defaults, true)
+    
+    -- 同步调试设置
+    self.DebugEnabled = self.DB.profile.debugEnabled or false
+    
     -- 注册控制台命令
     self:RegisterChatCommand("hhdebug", "ToggleDebug")
     self:RegisterChatCommand("hekilihelperdebug", "ToggleDebug")
@@ -89,6 +114,9 @@ end
 -- 切换调试开关的控制台命令
 function HekiliHelper:ToggleDebug(input)
     self.DebugEnabled = not self.DebugEnabled
+    if self.DB then
+        self.DB.profile.debugEnabled = self.DebugEnabled
+    end
     if self.DebugEnabled then
         self:Print("|cFF00FF00[HekiliHelper]|r 调试模式已开启")
     else
@@ -114,6 +142,9 @@ function HekiliHelper:InitializeModules()
     self:DebugPrint("|cFF00FF00[HekiliHelper]|r 正在初始化模块...")
     self:DebugPrint("|cFF00FF00[HekiliHelper]|r Hekili.Update存在: " .. (Hekili.Update and "是" or "否"))
     
+    -- 集成选项到Hekili
+    self:IntegrateOptions()
+    
     -- 检查模块是否存在并初始化
     if self.MeleeTargetIndicator then
         self:DebugPrint("|cFF00FF00[HekiliHelper]|r 找到MeleeTargetIndicator模块，开始初始化...")
@@ -137,6 +168,32 @@ function HekiliHelper:InitializeModules()
         end
     else
         self:DebugPrint("|cFFFF0000[HekiliHelper]|r 警告: HealingShamanSkills模块未找到（可能未加载）")
+    end
+end
+
+-- 集成选项到Hekili主界面
+function HekiliHelper:IntegrateOptions()
+    if not Hekili or not Hekili.Options or not Hekili.Options.args then
+        self:DebugPrint("|cFFFF0000[HekiliHelper]|r 警告: Hekili.Options未准备好，稍后重试...")
+        C_Timer.After(1.0, function()
+            if Hekili and Hekili.Options and Hekili.Options.args then
+                self:IntegrateOptions()
+            end
+        end)
+        return
+    end
+    
+    if not self.Options then
+        self:DebugPrint("|cFFFF0000[HekiliHelper]|r 警告: Options模块未加载")
+        return
+    end
+    
+    local optionsTable = self.Options:GetOptions()
+    if optionsTable then
+        Hekili.Options.args.hekiliHelper = optionsTable
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r 选项已集成到Hekili主界面")
+    else
+        self:Print("|cFFFF0000[HekiliHelper]|r 错误: 无法获取选项表")
     end
 end
 

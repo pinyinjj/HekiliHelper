@@ -1,0 +1,337 @@
+-- Modules/Options.lua
+-- HekiliHelper选项界面模块
+-- 为HekiliHelper创建GUI选项页面，集成到Hekili主界面
+
+local HekiliHelper = _G.HekiliHelper
+
+if not HekiliHelper then
+    -- 如果HekiliHelper还不存在，说明加载顺序有问题
+    -- 这种情况下，我们延迟创建模块
+    C_Timer.After(0.1, function()
+        local HH = _G.HekiliHelper
+        if HH and not HH.Options then
+            HH.Options = {}
+        end
+    end)
+    return
+end
+
+-- 创建模块对象
+if not HekiliHelper.Options then
+    HekiliHelper.Options = {}
+end
+
+local Module = HekiliHelper.Options
+
+-- 获取选项表
+function Module:GetOptions()
+    local db = HekiliHelper.DB.profile
+    
+    return {
+        type = "group",
+        name = "HekiliHelper",
+        order = 87, -- 放在快照选项之后
+        childGroups = "tab",
+        args = {
+            general = {
+                type = "group",
+                name = "通用设置",
+                order = 1,
+                args = {
+                    header = {
+                        type = "header",
+                        name = "HekiliHelper 通用设置",
+                        order = 1,
+                        width = "full"
+                    },
+                    
+                    desc = {
+                        type = "description",
+                        name = "HekiliHelper是Hekili的辅助插件，提供额外的功能增强。\n\n" ..
+                               "在这里可以配置各个模块的启用状态和参数设置。",
+                        fontSize = "medium",
+                        order = 2,
+                        width = "full"
+                    },
+                    
+                    enabled = {
+                        type = "toggle",
+                        name = "启用插件",
+                        desc = "启用或禁用HekiliHelper插件。",
+                        order = 10,
+                        width = "full",
+                        get = function()
+                            return db.enabled
+                        end,
+                        set = function(info, val)
+                            db.enabled = val
+                            if val then
+                                HekiliHelper:Enable()
+                            else
+                                HekiliHelper:Disable()
+                            end
+                        end
+                    },
+                    
+                    debugEnabled = {
+                        type = "toggle",
+                        name = "调试模式",
+                        desc = "启用调试信息输出到聊天窗口。",
+                        order = 11,
+                        width = "full",
+                        get = function()
+                            return db.debugEnabled or false
+                        end,
+                        set = function(info, val)
+                            db.debugEnabled = val
+                            HekiliHelper.DebugEnabled = val
+                        end
+                    },
+                }
+            },
+            
+            meleeIndicator = {
+                type = "group",
+                name = "近战目标指示器",
+                order = 2,
+                args = {
+                    header = {
+                        type = "header",
+                        name = "近战目标指示器设置",
+                        order = 1,
+                        width = "full"
+                    },
+                    
+                    desc = {
+                        type = "description",
+                        name = "当玩家身边近战范围内（5码）存在敌方存活单位，但玩家没有目标或目标超出近战范围时，在Hekili显示界面中插入指示图标。",
+                        fontSize = "medium",
+                        order = 2,
+                        width = "full"
+                    },
+                    
+                    enabled = {
+                        type = "toggle",
+                        name = "启用近战目标指示器",
+                        desc = "启用或禁用近战目标指示器功能。",
+                        order = 10,
+                        width = "full",
+                        get = function()
+                            return db.meleeIndicator and db.meleeIndicator.enabled ~= false
+                        end,
+                        set = function(info, val)
+                            if not db.meleeIndicator then
+                                db.meleeIndicator = {}
+                            end
+                            db.meleeIndicator.enabled = val
+                        end
+                    },
+                    
+                    checkRange = {
+                        type = "range",
+                        name = "检测范围（码）",
+                        desc = "检测近战敌人的范围。",
+                        order = 11,
+                        min = 3,
+                        max = 10,
+                        step = 1,
+                        width = "full",
+                        get = function()
+                            return db.meleeIndicator and db.meleeIndicator.checkRange or 5
+                        end,
+                        set = function(info, val)
+                            if not db.meleeIndicator then
+                                db.meleeIndicator = {}
+                            end
+                            db.meleeIndicator.checkRange = val
+                        end
+                    },
+                }
+            },
+            
+            healingShaman = {
+                type = "group",
+                name = "治疗萨满",
+                order = 3,
+                args = {
+                    header = {
+                        type = "header",
+                        name = "治疗萨满设置",
+                        order = 1,
+                        width = "full"
+                    },
+                    
+                    desc = {
+                        type = "description",
+                        name = "为治疗萨满职业提供智能治疗技能推荐，根据队友血量情况自动推荐合适的治疗技能。",
+                        fontSize = "medium",
+                        order = 2,
+                        width = "full"
+                    },
+                    
+                    enabled = {
+                        type = "toggle",
+                        name = "启用",
+                        desc = "启用或禁用治疗萨满技能推荐功能。",
+                        order = 10,
+                        width = "full",
+                        get = function()
+                            return db.healingShaman and db.healingShaman.enabled ~= false
+                        end,
+                        set = function(info, val)
+                            if not db.healingShaman then
+                                db.healingShaman = {}
+                            end
+                            db.healingShaman.enabled = val
+                        end
+                    },
+                    
+                    riptideThreshold = {
+                        type = "range",
+                        name = "激流（剩余生命值%）",
+                        desc = "当目标剩余生命值低于此百分比时，推荐使用激流。",
+                        order = 10.5,
+                        min = 1,
+                        max = 100,
+                        step = 1,
+                        width = "full",
+                        get = function()
+                            return db.healingShaman and db.healingShaman.riptideThreshold or 99
+                        end,
+                        set = function(info, val)
+                            if not db.healingShaman then
+                                db.healingShaman = {}
+                            end
+                            db.healingShaman.riptideThreshold = val
+                        end
+                    },
+                    
+                    tideForceThreshold = {
+                        type = "range",
+                        name = "潮汐之力（剩余生命值%）",
+                        desc = "团队状态：1/3以上成员生命值低于此百分比时触发。小队状态：一半以上成员生命值低于此百分比时触发。",
+                        order = 10.7,
+                        min = 1,
+                        max = 100,
+                        step = 1,
+                        width = "full",
+                        get = function()
+                            return db.healingShaman and db.healingShaman.tideForceThreshold or 50
+                        end,
+                        set = function(info, val)
+                            if not db.healingShaman then
+                                db.healingShaman = {}
+                            end
+                            db.healingShaman.tideForceThreshold = val
+                        end
+                    },
+                    
+                    chainHealThreshold = {
+                        type = "range",
+                        name = "治疗链（剩余生命值%）",
+                        desc = "当目标剩余生命值低于此百分比时，推荐使用治疗链。需要至少2个同小队成员也低于相应剩余生命值才触发。",
+                        order = 11,
+                        min = 1,
+                        max = 100,
+                        step = 1,
+                        width = "full",
+                        get = function()
+                            return db.healingShaman and db.healingShaman.chainHealThreshold or 90
+                        end,
+                        set = function(info, val)
+                            if not db.healingShaman then
+                                db.healingShaman = {}
+                            end
+                            db.healingShaman.chainHealThreshold = val
+                        end
+                    },
+                    
+                    healingWaveThreshold = {
+                        type = "range",
+                        name = "治疗波（剩余生命值%）",
+                        desc = "当目标剩余生命值低于此百分比时，推荐使用治疗波。",
+                        order = 12,
+                        min = 1,
+                        max = 100,
+                        step = 1,
+                        width = "full",
+                        get = function()
+                            return db.healingShaman and db.healingShaman.healingWaveThreshold or 30
+                        end,
+                        set = function(info, val)
+                            if not db.healingShaman then
+                                db.healingShaman = {}
+                            end
+                            db.healingShaman.healingWaveThreshold = val
+                        end
+                    },
+                    
+                    lesserHealingWaveThreshold = {
+                        type = "range",
+                        name = "次级治疗波（剩余生命值%）",
+                        desc = "当目标剩余生命值低于此百分比时，推荐使用次级治疗波。",
+                        order = 13,
+                        min = 1,
+                        max = 100,
+                        step = 1,
+                        width = "full",
+                        get = function()
+                            return db.healingShaman and db.healingShaman.lesserHealingWaveThreshold or 90
+                        end,
+                        set = function(info, val)
+                            if not db.healingShaman then
+                                db.healingShaman = {}
+                            end
+                            db.healingShaman.lesserHealingWaveThreshold = val
+                        end
+                    },
+                    
+                    earthShieldTip = {
+                        type = "description",
+                        name = "|cFF00FF00大地之盾说明：|r\n只检查当前|cFFFFD700焦点目标|r的大地之盾buff。当存在|cFFFFD700焦点目标|r且该目标没有大地之盾时，会推荐使用。",
+                        fontSize = "medium",
+                        order = 14,
+                        width = "full"
+                    },
+                }
+            },
+            
+            about = {
+                type = "group",
+                name = "关于",
+                order = 4,
+                args = {
+                    header = {
+                        type = "header",
+                        name = "关于 HekiliHelper",
+                        order = 1,
+                        width = "full"
+                    },
+                    
+                    version = {
+                        type = "description",
+                        name = function()
+                            return "版本: |cFF00FF00" .. (HekiliHelper.Version or "未知") .. "|r\n\n"
+                        end,
+                        fontSize = "medium",
+                        order = 2,
+                        width = "full"
+                    },
+                    
+                    description = {
+                        type = "description",
+                        name = "HekiliHelper是Hekili的辅助插件，提供额外的功能增强。\n\n" ..
+                               "当前包含的功能模块：\n" ..
+                               "• 近战目标指示器\n" ..
+                               "• 治疗萨满\n\n" ..
+                               "更多功能正在开发中...",
+                        fontSize = "medium",
+                        order = 3,
+                        width = "full"
+                    },
+                }
+            }
+        }
+    }
+end
+
