@@ -25,8 +25,25 @@ local Module = HekiliHelper.Options
 
 -- 获取选项表
 function Module:GetOptions()
-    -- 注意：不在闭包中使用db，而是在get/set函数中直接访问，确保获取最新值
-    -- local db = HekiliHelper.DB.profile
+    -- 确保数据库已初始化，如果未初始化则使用默认值
+    if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+        -- 如果数据库未初始化，返回一个延迟加载的选项表
+        -- 这个函数会在数据库初始化后被重新调用
+        return {
+            type = "group",
+            name = "HekiliHelper",
+            order = 87,
+            childGroups = "tab",
+            args = {
+                error = {
+                    type = "description",
+                    name = "|cFFFF0000错误: 数据库未初始化|r\n请重新加载界面 (/reload)",
+                    order = 1,
+                    width = "full"
+                }
+            }
+        }
+    end
     
     return {
         type = "group",
@@ -62,18 +79,20 @@ function Module:GetOptions()
                         order = 10,
                         width = "full",
                         get = function()
-                            local db = HekiliHelper.DB and HekiliHelper.DB.profile
-                            return db and db.enabled
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return true
+                            end
+                            return HekiliHelper.DB.profile.enabled
                         end,
                         set = function(info, val)
-                            local db = HekiliHelper.DB and HekiliHelper.DB.profile
-                            if db then
-                                db.enabled = val
-                                if val then
-                                    HekiliHelper:Enable()
-                                else
-                                    HekiliHelper:Disable()
-                                end
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return
+                            end
+                            HekiliHelper.DB.profile.enabled = val
+                            if val then
+                                HekiliHelper:Enable()
+                            else
+                                HekiliHelper:Disable()
                             end
                         end
                     },
@@ -81,18 +100,36 @@ function Module:GetOptions()
                     debugEnabled = {
                         type = "toggle",
                         name = "调试模式",
-                        desc = "启用调试信息输出到聊天窗口。",
+                        desc = "启用调试信息输出到调试窗口。使用 /hhdebugwin 也可以显示/隐藏调试窗口。",
                         order = 11,
                         width = "full",
                         get = function()
-                            local db = HekiliHelper.DB and HekiliHelper.DB.profile
-                            return db and (db.debugEnabled or false) or false
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return false
+                            end
+                            return HekiliHelper.DB.profile.debugEnabled or false
                         end,
                         set = function(info, val)
-                            local db = HekiliHelper.DB and HekiliHelper.DB.profile
-                            if db then
-                                db.debugEnabled = val
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return
+                            end
+                            HekiliHelper.DB.profile.debugEnabled = val
+                            if HekiliHelper then
                                 HekiliHelper.DebugEnabled = val
+                                
+                                -- 确保调试窗口已创建
+                                if val then
+                                    if not HekiliHelper.DebugWindow then
+                                        HekiliHelper:CreateDebugWindow()
+                                    end
+                                    if HekiliHelper.DebugWindow then
+                                        HekiliHelper.DebugWindow:Show()
+                                    end
+                                else
+                                    if HekiliHelper.DebugWindow then
+                                        HekiliHelper.DebugWindow:Hide()
+                                    end
+                                end
                             end
                         end
                     },
@@ -126,17 +163,24 @@ function Module:GetOptions()
                         order = 10,
                         width = "full",
                         get = function()
-                            local db = HekiliHelper.DB and HekiliHelper.DB.profile
-                            return db and db.meleeIndicator and db.meleeIndicator.enabled ~= false or true
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return true
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.meleeIndicator then
+                                db.meleeIndicator = {}
+                            end
+                            return db.meleeIndicator.enabled ~= false
                         end,
                         set = function(info, val)
-                            local db = HekiliHelper.DB and HekiliHelper.DB.profile
-                            if db then
-                                if not db.meleeIndicator then
-                                    db.meleeIndicator = {}
-                                end
-                                db.meleeIndicator.enabled = val
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return
                             end
+                            local db = HekiliHelper.DB.profile
+                            if not db.meleeIndicator then
+                                db.meleeIndicator = {}
+                            end
+                            db.meleeIndicator.enabled = val
                         end
                     },
                     
@@ -150,17 +194,24 @@ function Module:GetOptions()
                         step = 1,
                         width = "full",
                         get = function()
-                            local db = HekiliHelper.DB and HekiliHelper.DB.profile
-                            return db and db.meleeIndicator and db.meleeIndicator.checkRange or 5
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return 5
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.meleeIndicator then
+                                db.meleeIndicator = {}
+                            end
+                            return db.meleeIndicator.checkRange or 5
                         end,
                         set = function(info, val)
-                            local db = HekiliHelper.DB and HekiliHelper.DB.profile
-                            if db then
-                                if not db.meleeIndicator then
-                                    db.meleeIndicator = {}
-                                end
-                                db.meleeIndicator.checkRange = val
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return
                             end
+                            local db = HekiliHelper.DB.profile
+                            if not db.meleeIndicator then
+                                db.meleeIndicator = {}
+                            end
+                            db.meleeIndicator.checkRange = val
                         end
                     },
                 }
@@ -193,17 +244,24 @@ function Module:GetOptions()
                         order = 10,
                         width = "full",
                         get = function()
-                            local db = HekiliHelper.DB and HekiliHelper.DB.profile
-                            return db and db.healingShaman and db.healingShaman.enabled ~= false or true
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return true
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then
+                                db.healingShaman = {}
+                            end
+                            return db.healingShaman.enabled ~= false
                         end,
                         set = function(info, val)
-                            local db = HekiliHelper.DB and HekiliHelper.DB.profile
-                            if db then
-                                if not db.healingShaman then
-                                    db.healingShaman = {}
-                                end
-                                db.healingShaman.enabled = val
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return
                             end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then
+                                db.healingShaman = {}
+                            end
+                            db.healingShaman.enabled = val
                         end
                     },
                     
@@ -217,18 +275,24 @@ function Module:GetOptions()
                         step = 1,
                         width = "full",
                         get = function()
-                            local db = HekiliHelper.DB and HekiliHelper.DB.profile
-                            return db and db.healingShaman and db.healingShaman.riptideThreshold or 99
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return 99
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then
+                                db.healingShaman = {}
+                            end
+                            return db.healingShaman.riptideThreshold or 99
                         end,
                         set = function(info, val)
-                            local db = HekiliHelper.DB and HekiliHelper.DB.profile
-                            if db then
-                                if not db.healingShaman then
-                                    db.healingShaman = {}
-                                end
-                                db.healingShaman.riptideThreshold = val
-                                HekiliHelper:DebugPrint(string.format("|cFF00FF00[Options]|r 激流阈值已更新为: %d", val))
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return
                             end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then
+                                db.healingShaman = {}
+                            end
+                            db.healingShaman.riptideThreshold = val
                         end
                     },
                     
@@ -242,18 +306,24 @@ function Module:GetOptions()
                         step = 1,
                         width = "full",
                         get = function()
-                            local db = HekiliHelper.DB and HekiliHelper.DB.profile
-                            return db and db.healingShaman and db.healingShaman.tideForceThreshold or 50
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return 50
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then
+                                db.healingShaman = {}
+                            end
+                            return db.healingShaman.tideForceThreshold or 50
                         end,
                         set = function(info, val)
-                            local db = HekiliHelper.DB and HekiliHelper.DB.profile
-                            if db then
-                                if not db.healingShaman then
-                                    db.healingShaman = {}
-                                end
-                                db.healingShaman.tideForceThreshold = val
-                                HekiliHelper:DebugPrint(string.format("|cFF00FF00[Options]|r 潮汐之力阈值已更新为: %d", val))
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return
                             end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then
+                                db.healingShaman = {}
+                            end
+                            db.healingShaman.tideForceThreshold = val
                         end
                     },
                     
@@ -267,18 +337,24 @@ function Module:GetOptions()
                         step = 1,
                         width = "full",
                         get = function()
-                            local db = HekiliHelper.DB and HekiliHelper.DB.profile
-                            return db and db.healingShaman and db.healingShaman.chainHealThreshold or 90
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return 90
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then
+                                db.healingShaman = {}
+                            end
+                            return db.healingShaman.chainHealThreshold or 90
                         end,
                         set = function(info, val)
-                            local db = HekiliHelper.DB and HekiliHelper.DB.profile
-                            if db then
-                                if not db.healingShaman then
-                                    db.healingShaman = {}
-                                end
-                                db.healingShaman.chainHealThreshold = val
-                                HekiliHelper:DebugPrint(string.format("|cFF00FF00[Options]|r 治疗链阈值已更新为: %d", val))
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return
                             end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then
+                                db.healingShaman = {}
+                            end
+                            db.healingShaman.chainHealThreshold = val
                         end
                     },
                     
@@ -292,18 +368,24 @@ function Module:GetOptions()
                         step = 1,
                         width = "full",
                         get = function()
-                            local db = HekiliHelper.DB and HekiliHelper.DB.profile
-                            return db and db.healingShaman and db.healingShaman.healingWaveThreshold or 30
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return 30
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then
+                                db.healingShaman = {}
+                            end
+                            return db.healingShaman.healingWaveThreshold or 30
                         end,
                         set = function(info, val)
-                            local db = HekiliHelper.DB and HekiliHelper.DB.profile
-                            if db then
-                                if not db.healingShaman then
-                                    db.healingShaman = {}
-                                end
-                                db.healingShaman.healingWaveThreshold = val
-                                HekiliHelper:DebugPrint(string.format("|cFF00FF00[Options]|r 治疗波阈值已更新为: %d", val))
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return
                             end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then
+                                db.healingShaman = {}
+                            end
+                            db.healingShaman.healingWaveThreshold = val
                         end
                     },
                     
@@ -317,18 +399,24 @@ function Module:GetOptions()
                         step = 1,
                         width = "full",
                         get = function()
-                            local db = HekiliHelper.DB and HekiliHelper.DB.profile
-                            return db and db.healingShaman and db.healingShaman.lesserHealingWaveThreshold or 90
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return 90
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then
+                                db.healingShaman = {}
+                            end
+                            return db.healingShaman.lesserHealingWaveThreshold or 90
                         end,
                         set = function(info, val)
-                            local db = HekiliHelper.DB and HekiliHelper.DB.profile
-                            if db then
-                                if not db.healingShaman then
-                                    db.healingShaman = {}
-                                end
-                                db.healingShaman.lesserHealingWaveThreshold = val
-                                HekiliHelper:DebugPrint(string.format("|cFF00FF00[Options]|r 次级治疗波阈值已更新为: %d", val))
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return
                             end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then
+                                db.healingShaman = {}
+                            end
+                            db.healingShaman.lesserHealingWaveThreshold = val
                         end
                     },
                     

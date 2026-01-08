@@ -721,19 +721,38 @@ function Module:CheckManaTideTotem()
             local classification = UnitClassification(unit)
             -- 检查是否为boss级别（worldboss, rareelite, elite）
             if (classification == "worldboss" or classification == "rareelite" or classification == "elite") then
-                -- 检查是否在战斗中
-                if UnitAffectingCombat and UnitAffectingCombat(unit) then
-                    -- 检查距离（40码）
-                    if RC then
-                        local minRange, maxRange = RC:GetRange(unit)
-                        if maxRange and maxRange <= 40 then
-                            hasBossInRange = true
-                            break
+                -- 检查是否在战斗中（需要boss和玩家都在战斗中）
+                if UnitAffectingCombat and UnitAffectingCombat(unit) and UnitAffectingCombat("player") then
+                    -- 检查玩家是否与该boss在战斗中（通过检查threat状态）
+                    local isInCombat = false
+                    if UnitThreatSituation then
+                        -- 检查玩家对该boss的威胁值情况，如果返回非nil且>=0，说明在战斗中
+                        local threatSituation = UnitThreatSituation("player", unit)
+                        if threatSituation and threatSituation >= 0 then
+                            isInCombat = true
                         end
                     else
-                        -- 如果没有LibRangeCheck，默认认为boss单位在范围内
-                        hasBossInRange = true
-                        break
+                        -- 如果没有UnitThreatSituation API，只检查是否都在战斗中
+                        isInCombat = true
+                    end
+                    
+                    if isInCombat then
+                        -- 检查距离（40码）
+                        if RC then
+                            local minRange, maxRange = RC:GetRange(unit)
+                            if maxRange and maxRange <= 40 then
+                                hasBossInRange = true
+                                break
+                            end
+                        else
+                            -- 如果没有LibRangeCheck，使用CheckInteractDistance作为替代
+                            -- CheckInteractDistance的第二个参数：1=交易(约11码), 2=观察(约28码), 3=决斗(约9码), 4=跟随
+                            -- 我们检查28码（观察距离），如果在这个范围内，应该也在40码内
+                            if CheckInteractDistance and CheckInteractDistance(unit, 2) then
+                                hasBossInRange = true
+                                break
+                            end
+                        end
                     end
                 end
             end
@@ -746,11 +765,25 @@ function Module:CheckManaTideTotem()
             if unit and type(unit) == "string" and UnitExists(unit) and UnitCanAttack("player", unit) and not UnitIsDead(unit) then
                 local classification = UnitClassification(unit)
                 if (classification == "worldboss" or classification == "rareelite" or classification == "elite") then
-                    if UnitAffectingCombat and UnitAffectingCombat(unit) then
-                        local minRange, maxRange = RC:GetRange(unit)
-                        if maxRange and maxRange <= 40 then
-                            hasBossInRange = true
-                            break
+                    -- 检查是否在战斗中（需要boss和玩家都在战斗中）
+                    if UnitAffectingCombat and UnitAffectingCombat(unit) and UnitAffectingCombat("player") then
+                        -- 检查玩家是否与该boss在战斗中
+                        local isInCombat = false
+                        if UnitThreatSituation then
+                            local threatSituation = UnitThreatSituation("player", unit)
+                            if threatSituation and threatSituation >= 0 then
+                                isInCombat = true
+                            end
+                        else
+                            isInCombat = true
+                        end
+                        
+                        if isInCombat then
+                            local minRange, maxRange = RC:GetRange(unit)
+                            if maxRange and maxRange <= 40 then
+                                hasBossInRange = true
+                                break
+                            end
                         end
                     end
                 end
@@ -1306,8 +1339,13 @@ function Module:InsertSkillForDisplay(dispName, UI)
         
         -- 如果目标存在且受伤，使用次级治疗波作为兜底
         if targetUnit then
+            -- 读取配置中的次级治疗波触发阈值
+            local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
+            local threshold = (db and db.healingShaman and db.healingShaman.lesserHealingWaveThreshold) or 90
+            
             local targetHealthPercent = self:GetUnitHealthPercent(targetUnit)
-            if targetHealthPercent < 100 then
+            -- 只有当目标血量低于配置的阈值时才触发兜底
+            if targetHealthPercent <= threshold then
                 -- 找到次级治疗波的定义
                 local lesserHealingWaveDef = nil
                 for _, skillDef in ipairs(self.SkillDefinitions) do
@@ -1330,7 +1368,7 @@ function Module:InsertSkillForDisplay(dispName, UI)
                     
                     -- 插入次级治疗波作为兜底
                     self:CheckAndInsertSkill(lesserHealingWaveDef, Queue, UI, dispName, targetUnit, insertPos)
-                    HekiliHelper:DebugPrint(string.format("|cFFFF00FF[HealingShaman]|r 使用次级治疗波作为兜底技能 (目标血量: %.1f%%)", targetHealthPercent))
+                    HekiliHelper:DebugPrint(string.format("|cFFFF00FF[HealingShaman]|r 使用次级治疗波作为兜底技能 (目标血量: %.1f%%, 阈值: %d%%)", targetHealthPercent, threshold))
                 end
             end
         end
