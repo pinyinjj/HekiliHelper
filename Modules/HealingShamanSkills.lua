@@ -432,31 +432,41 @@ function Module:CheckStoneclawTotem()
         return false, nil
     end
 
-    local spellID = 58582
-    if not self:IsSpellReady(spellID) then return false, nil end
+    local stoneclawSpellID = 58582 -- 技能ID
+    local glyphSpellID = 55438     -- 石爪图腾雕文的SpellID
+    
+    if not self:IsSpellReady(stoneclawSpellID) then return false, nil end
 
-    -- 2. 生命值检查：不满血（<100%）
+    -- 2. 核心前提：必须装备了石爪图腾雕文
+    local hasGlyph = false
+    for i = 1, 6 do
+        local enabled, _, glyphSpell, _ = GetGlyphSocketInfo(i)
+        if enabled and glyphSpell == glyphSpellID then
+            hasGlyph = true
+            break
+        end
+    end
+    
+    if not hasGlyph then return false, nil end
+
+    -- 3. 生命值检查：不满血（<100%）
     if self:GetUnitHealthPercent("player") >= 100 then
         return false, nil
     end
 
-    -- 3. 仇恨检查：遍历所有可能的敌对单位，检查是否有单位以玩家为目标
-    -- 优先检查当前目标、焦点
-    local checkUnits = { "target", "focus", "targettarget" }
+    -- 4. 仇恨检查：是否有敌对单位正以玩家为目标
+    local isTargeted = false
+    -- 检查当前目标、焦点、Boss
+    local checkUnits = { "target", "focus", "boss1", "boss2", "boss3", "boss4" }
     
-    -- 遍历 Boss 和 姓名板（HekiliHelper 通常会追踪 npGUIDs）
-    for i = 1, 4 do table.insert(checkUnits, "boss" .. i) end
-    
-    -- 如果 Hekili 正在追踪姓名板，利用它来检测
+    -- 结合 Hekili 追踪的姓名板
     if Hekili and Hekili.npGUIDs then
         for unit, _ in pairs(Hekili.npGUIDs) do
             table.insert(checkUnits, unit)
         end
     end
 
-    local isTargeted = false
     for _, unit in ipairs(checkUnits) do
-        -- 必须是：存在、敌对、存活、在战斗中、目标是玩家
         if UnitExists(unit) and UnitCanAttack("player", unit) and not UnitIsDead(unit) 
            and UnitAffectingCombat(unit) and UnitIsUnit(unit .. "target", "player") then
             isTargeted = true
@@ -1044,6 +1054,8 @@ function Module:IsValidHealingTarget(unit)
         return false
     end
     
+    if not UnitCanCooperate("player", unit) then return false end
+
     return true
 end
 
