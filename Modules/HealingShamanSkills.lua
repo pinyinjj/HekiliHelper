@@ -121,6 +121,13 @@ end
 -- 每个技能包含：actionName（Hekili中的key）、spellID、priority（优先级，越小越优先）、checkFunc（判断函数）、displayName（显示名称）
 Module.SkillDefinitions = {
     {
+        actionName = "stoneclaw_totem",
+        spellID = 58582,
+        priority = 0.5,
+        checkFunc = function(self) return self:CheckStoneclawTotem() end,
+        displayName = "石爪图腾"
+    },
+    {
         actionName = "water_shield",
         spellID = 57960,
         priority = 1,
@@ -158,14 +165,14 @@ Module.SkillDefinitions = {
     {
         actionName = "chain_heal",
         spellID = 49273,
-        priority = 5,
+        priority = 6,
         checkFunc = function(self) return self:CheckChainHeal() end,
         displayName = "治疗链"
     },
     {
         actionName = "healing_wave",
-        spellID = 49273, -- 最高等级
-        priority = 6,
+        spellID = 49273,
+        priority = 5,
         checkFunc = function(self) return self:CheckHealingWave() end,
         displayName = "治疗波"
     },
@@ -425,6 +432,10 @@ function Module:CheckHealingWave()
         return false, nil
     end
     
+    if db.healingShaman.enableHealingWave == false then
+        return false, nil
+    end
+
     -- 检查鼠标悬停目标或当前选中目标
     local targetUnit = nil
     
@@ -465,6 +476,10 @@ function Module:CheckLesserHealingWave()
         return false, nil
     end
     
+    if db.healingShaman.enableLesserHealingWave == false then
+        return false, nil
+    end
+
     -- 检查鼠标悬停目标或当前选中目标
     local targetUnit = nil
     
@@ -588,6 +603,11 @@ function Module:CheckRiptide()
         return false, nil
     end
     
+    local riptideSpellID = 61295
+    if IsSpellKnown and not IsSpellKnown(riptideSpellID) then
+        return false, nil
+    end
+
     -- 检查鼠标悬停目标或当前选中目标
     local targetUnit = nil
     
@@ -652,6 +672,11 @@ function Module:CheckEarthShield()
         return false, nil
     end
     
+    local earthShieldSpellID = 49284
+    if IsSpellKnown and not IsSpellKnown(earthShieldSpellID) then
+        return false, nil
+    end
+
     -- 只有当存在焦点目标时才推荐使用大地之盾
     if not UnitExists("focus") then
         return false, nil
@@ -868,27 +893,37 @@ function Module:CheckWindShear()
     return false, nil
 end
 
--- 大地生命武器判断
+
 function Module:CheckEarthlivingWeapon()
-    -- 检查模块是否启用
     local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
     if not db or not db.healingShaman or db.healingShaman.enabled == false then
         return false, nil
     end
     
-    -- 检查主手武器是否有大地生命武器的临时附魔
-    -- 使用GetWeaponEnchantInfo()检查主手武器的临时附魔ID
-    local hasMainHandEnchant, _, _, mainHandEnchantID = GetWeaponEnchantInfo()
+    local earthlivingID = 3350
+    local info = { GetWeaponEnchantInfo() }
     
-    -- 如果主手有临时附魔，检查附魔ID是否为3350（大地生命武器的附魔ID）
-    if hasMainHandEnchant and mainHandEnchantID == 3350 then
-        HekiliHelper:DebugPrint(string.format("|cFF00FF00[HealingShaman]|r 检测到大地生命武器临时附魔 (ID: 3350)"))
-        return false, nil
+
+    local hasMain, mainID = info[1], info[4]
+    local hasOff, offID = info[5], info[8]
+
+    if not hasMain or mainID ~= earthlivingID then
+        return true, "player"
+    end
+
+    local offhandID = GetInventoryItemID("player", 17)
+    if offhandID then
+
+        local isWeapon = IsSecondarySkillWeapon and IsSecondarySkillWeapon()
+        if not hasOff or offID ~= earthlivingID then
+            local _, _, _, _, _, _, _, _, itemEquipLoc = GetItemInfo(offhandID)
+            if itemEquipLoc ~= "INVTYPE_SHIELD" and itemEquipLoc ~= "INVTYPE_HOLDABLE" then
+                return true, "player"
+            end
+        end
     end
     
-    -- 如果没有找到大地生命武器的临时附魔，返回true
-    HekiliHelper:DebugPrint(string.format("|cFFFF0000[HealingShaman]|r 未检测到大地生命武器临时附魔 (主手附魔ID: %s)", tostring(mainHandEnchantID or "无")))
-    return true, "player"
+    return false, nil
 end
 
 -- ============================================

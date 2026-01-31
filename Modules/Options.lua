@@ -264,7 +264,52 @@ function Module:GetOptions()
                             db.healingShaman.enabled = val
                         end
                     },
-                    
+                    enableHealingWave = {
+                        type = "toggle",
+                        name = "启用治疗波",
+                        desc = "在推荐列表中包含治疗波",
+                        order = 10.1, -- 稍微调整顺序以保持整齐
+                        width = "full",
+                        get = function()
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return true
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then db.healingShaman = {} end
+                            return db.healingShaman.enableHealingWave ~= false
+                        end,
+                        set = function(info, val)
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then db.healingShaman = {} end
+                            db.healingShaman.enableHealingWave = val
+                        end,
+                    },
+                    enableLesserHealingWave = {
+                        type = "toggle",
+                        name = "启用次级治疗波",
+                        desc = "在推荐列表中包含次级治疗波",
+                        order = 10.2,
+                        width = "full",
+                        get = function()
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return true
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then db.healingShaman = {} end
+                            return db.healingShaman.enableLesserHealingWave ~= false
+                        end,
+                        set = function(info, val)
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then db.healingShaman = {} end
+                            db.healingShaman.enableLesserHealingWave = val
+                        end,
+                    },
                     riptideThreshold = {
                         type = "range",
                         name = "激流（剩余生命值%）",
