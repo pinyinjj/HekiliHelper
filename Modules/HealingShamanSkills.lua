@@ -123,7 +123,7 @@ Module.SkillDefinitions = {
     {
         actionName = "stoneclaw_totem",
         spellID = 58582,
-        priority = 0.5,
+        priority = 8,
         checkFunc = function(self) return self:CheckStoneclawTotem() end,
         displayName = "石爪图腾"
     },
@@ -186,49 +186,49 @@ Module.SkillDefinitions = {
     {
         actionName = "purge",
         spellID = 370,
-        priority = 8,
+        priority = 9,
         checkFunc = function(self) return self:CheckPurge() end,
         displayName = "净化术"
     },
     {
         actionName = "dispel_magic",
         spellID = 370,
-        priority = 9,
+        priority = 10,
         checkFunc = function(self) return self:CheckDispelMagic() end,
         displayName = "驱散魔法"
     },
     {
         actionName = "natures_swiftness",
         spellID = 16188,
-        priority = 10,
+        priority = 11,
         checkFunc = function(self) return self:CheckNaturesSwiftness() end,
         displayName = "自然迅捷"
     },
     {
         actionName = "cure_disease",
         spellID = 2870,
-        priority = 11,
+        priority = 12,
         checkFunc = function(self) return self:CheckCureDisease() end,
         displayName = "祛病术"
     },
     {
         actionName = "cure_poison",
         spellID = 526,
-        priority = 12,
+        priority = 13,
         checkFunc = function(self) return self:CheckCurePoison() end,
         displayName = "解毒术"
     },
     {
         actionName = "wind_shear",
         spellID = 57994,
-        priority = 13,
+        priority = 14,
         checkFunc = function(self) return self:CheckWindShear() end,
         displayName = "风剪"
     },
     {
         actionName = "mana_tide_totem",
         spellID = 16190,
-        priority = 14,
+        priority = 15,
         checkFunc = function(self) return self:CheckManaTideTotem() end,
         displayName = "法力之潮图腾"
     },
@@ -424,20 +424,23 @@ function Module:CheckChainHeal()
     return false, nil
 end
 
--- 石爪图腾判断
+-- 石爪图腾判断 (逻辑更新：只要不满血且冷却结束即释放)
 function Module:CheckStoneclawTotem()
-    -- 1. 基础检查
+    -- 1. 基础检查：模块启用、技能可用
     local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
     if not db or not db.healingShaman or db.healingShaman.enabled == false then
         return false, nil
     end
 
-    local stoneclawSpellID = 58582 -- 技能ID
-    local glyphSpellID = 55438     -- 石爪图腾雕文的SpellID
+    local stoneclawSpellID = 58582
+    local glyphSpellID = 55438 -- 石爪图腾雕文
     
-    if not self:IsSpellReady(stoneclawSpellID) then return false, nil end
+    -- 检查技能是否冷却结束
+    if not self:IsSpellReady(stoneclawSpellID) then 
+        return false, nil 
+    end
 
-    -- 2. 核心前提：必须装备了石爪图腾雕文
+    -- 2. 核心前提：必须装备了石爪图腾雕文才进入此保命逻辑
     local hasGlyph = false
     for i = 1, 6 do
         local enabled, _, glyphSpell, _ = GetGlyphSocketInfo(i)
@@ -449,32 +452,9 @@ function Module:CheckStoneclawTotem()
     
     if not hasGlyph then return false, nil end
 
-    -- 3. 生命值检查：不满血（<100%）
-    if self:GetUnitHealthPercent("player") >= 100 then
-        return false, nil
-    end
-
-    -- 4. 仇恨检查：是否有敌对单位正以玩家为目标
-    local isTargeted = false
-    -- 检查当前目标、焦点、Boss
-    local checkUnits = { "target", "focus", "boss1", "boss2", "boss3", "boss4" }
-    
-    -- 结合 Hekili 追踪的姓名板
-    if Hekili and Hekili.npGUIDs then
-        for unit, _ in pairs(Hekili.npGUIDs) do
-            table.insert(checkUnits, unit)
-        end
-    end
-
-    for _, unit in ipairs(checkUnits) do
-        if UnitExists(unit) and UnitCanAttack("player", unit) and not UnitIsDead(unit) 
-           and UnitAffectingCombat(unit) and UnitIsUnit(unit .. "target", "player") then
-            isTargeted = true
-            break
-        end
-    end
-
-    if isTargeted then
+    -- 3. 生命值检查：只要不满血（<100%）就触发
+    -- 这样可以确保只要血量有任何缺口，且技能可用，就会利用雕文提供的护盾
+    if self:GetUnitHealthPercent("player") < 100 then
         return true, "player"
     end
 
@@ -571,81 +551,65 @@ function Module:CheckLesserHealingWave()
 end
 
 -- 潮汐之力判断
+-- 潮汐之力判断
 function Module:CheckTideForce()
-    -- 检查模块是否启用
+    -- 1. 基础检查：模块启用、是否学习、是否在冷却中
     local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
     if not db or not db.healingShaman or db.healingShaman.enabled == false then
         return false, nil
     end
     
-    -- 检查是否学习了技能
     local tideForceSpellID = 55198
+    
+    -- 增加：冷却检查（如果正在冷却则直接退出）
+    if not self:IsSpellReady(tideForceSpellID) then
+        return false, nil
+    end
+
+    -- 检查是否学习了技能
     if IsSpellKnown and not IsSpellKnown(tideForceSpellID) then
         return false, nil
     end
     
-    -- 读取配置中的潮汐之力触发阈值
-    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
+    -- 2. 阈值与环境检查
     local threshold = (db and db.healingShaman and db.healingShaman.tideForceThreshold) or 50
     
-    -- 检查是否在团队中
     if IsInRaid() then
         -- 团队状态：1/3以上成员生命值低于阈值
         local totalMembers = 0
         local injuredMembers = 0
         
-        -- 统计团队成员（包括玩家自己）
         for i = 1, 40 do
             local unit = "raid" .. i
             if UnitExists(unit) and self:IsValidHealingTarget(unit) and UnitInPhase(unit) then
                 totalMembers = totalMembers + 1
-                local healthPercent = self:GetUnitHealthPercent(unit)
-                if healthPercent < threshold then
+                if self:GetUnitHealthPercent(unit) < threshold then
                     injuredMembers = injuredMembers + 1
                 end
             end
         end
         
-        -- 计算需要的最低受伤人数（1/3以上，向上取整）
-        if totalMembers > 0 then
-            local requiredInjured = math.ceil(totalMembers / 3)
-            if injuredMembers >= requiredInjured then
-                return true, "player"
-            end
+        if totalMembers > 0 and injuredMembers >= math.ceil(totalMembers / 3) then
+            return true, "player"
         end
     elseif IsInGroup() then
-        -- 小队状态（不在团队中）：一半以上成员生命值低于阈值
+        -- 小队状态
         local totalMembers = 0
         local injuredMembers = 0
         
-        -- 统计玩家自己
-        if self:IsValidHealingTarget("player") then
-            totalMembers = totalMembers + 1
-            local healthPercent = self:GetUnitHealthPercent("player")
-            if healthPercent < threshold then
-                injuredMembers = injuredMembers + 1
-            end
-        end
-        
-        -- 统计小队成员
-        for i = 1, 4 do
-            local unit = "party" .. i
+        -- 统计玩家及小队成员
+        local groupUnits = { "player", "party1", "party2", "party3", "party4" }
+        for _, unit in ipairs(groupUnits) do
             if self:IsValidHealingTarget(unit) and UnitInPhase(unit) then
                 totalMembers = totalMembers + 1
-                local healthPercent = self:GetUnitHealthPercent(unit)
-                if healthPercent < threshold then
+                if self:GetUnitHealthPercent(unit) < threshold then
                     injuredMembers = injuredMembers + 1
                 end
             end
         end
         
-        -- 计算需要的最低受伤人数（一半以上，超过一半）
-        -- 例如：5人需要3人，4人需要3人
-        if totalMembers > 0 then
-            local requiredInjured = math.floor(totalMembers / 2) + 1
-            if injuredMembers >= requiredInjured then
-                return true, "player"
-            end
+        if totalMembers > 0 and injuredMembers >= (math.floor(totalMembers / 2) + 1) then
+            return true, "player"
         end
     end
     
