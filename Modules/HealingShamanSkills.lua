@@ -424,6 +424,53 @@ function Module:CheckChainHeal()
     return false, nil
 end
 
+-- 石爪图腾判断
+function Module:CheckStoneclawTotem()
+    -- 1. 基础检查
+    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
+    if not db or not db.healingShaman or db.healingShaman.enabled == false then
+        return false, nil
+    end
+
+    local spellID = 58582
+    if not self:IsSpellReady(spellID) then return false, nil end
+
+    -- 2. 生命值检查：不满血（<100%）
+    if self:GetUnitHealthPercent("player") >= 100 then
+        return false, nil
+    end
+
+    -- 3. 仇恨检查：遍历所有可能的敌对单位，检查是否有单位以玩家为目标
+    -- 优先检查当前目标、焦点
+    local checkUnits = { "target", "focus", "targettarget" }
+    
+    -- 遍历 Boss 和 姓名板（HekiliHelper 通常会追踪 npGUIDs）
+    for i = 1, 4 do table.insert(checkUnits, "boss" .. i) end
+    
+    -- 如果 Hekili 正在追踪姓名板，利用它来检测
+    if Hekili and Hekili.npGUIDs then
+        for unit, _ in pairs(Hekili.npGUIDs) do
+            table.insert(checkUnits, unit)
+        end
+    end
+
+    local isTargeted = false
+    for _, unit in ipairs(checkUnits) do
+        -- 必须是：存在、敌对、存活、在战斗中、目标是玩家
+        if UnitExists(unit) and UnitCanAttack("player", unit) and not UnitIsDead(unit) 
+           and UnitAffectingCombat(unit) and UnitIsUnit(unit .. "target", "player") then
+            isTargeted = true
+            break
+        end
+    end
+
+    if isTargeted then
+        return true, "player"
+    end
+
+    return false, nil
+end
+
 -- 治疗波判断
 function Module:CheckHealingWave()
     -- 检查模块是否启用
