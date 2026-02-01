@@ -199,6 +199,10 @@ function HekiliHelper:OnInitialize()
                 healingWaveThreshold = 30,
                 lesserHealingWaveThreshold = 90,
             },
+            healthstone = {
+                enabled = true,
+                threshold = 70,
+            },
         }
     }
     
@@ -237,6 +241,13 @@ function HekiliHelper:OnInitialize()
         self:DebugPrint("|cFF00FF00[HekiliHelper]|r 创建HealingShamanSkills模块对象")
     else
         self:DebugPrint("|cFF00FF00[HekiliHelper]|r HealingShamanSkills模块对象已存在")
+    end
+    
+    if not self.Healthstone then
+        self.Healthstone = {}
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r 创建Healthstone模块对象")
+    else
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r Healthstone模块对象已存在")
     end
 end
 
@@ -358,6 +369,18 @@ function HekiliHelper:InitializeModules()
         end
     else
         self:DebugPrint("|cFFFF0000[HekiliHelper]|r 警告: HealingShamanSkills模块未找到（可能未加载）")
+    end
+    
+    if self.Healthstone then
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r 找到Healthstone模块，开始初始化...")
+        local success = self.Healthstone:Initialize()
+        if success then
+            self:DebugPrint("|cFF00FF00[HekiliHelper]|r Healthstone模块初始化成功")
+        else
+            self:Print("|cFFFF0000[HekiliHelper]|r Healthstone模块初始化失败")
+        end
+    else
+        self:DebugPrint("|cFFFF0000[HekiliHelper]|r 警告: Healthstone模块未找到（可能未加载）")
     end
 end
 

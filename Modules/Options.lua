@@ -214,6 +214,72 @@ function Module:GetOptions()
                             db.meleeIndicator.checkRange = val
                         end
                     },
+
+                    headerHealthstone = {
+                        type = "header",
+                        name = "灵魂石设置",
+                        order = 20,
+                        width = "full"
+                    },
+
+                    enableHealthstone = {
+                        type = "toggle",
+                        name = "启用灵魂石提示",
+                        desc = "当背包中有灵魂石且生命值低时提示使用。",
+                        order = 21,
+                        width = "full",
+                        get = function()
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return true
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healthstone then
+                                db.healthstone = {}
+                            end
+                            return db.healthstone.enabled ~= false
+                        end,
+                        set = function(info, val)
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healthstone then
+                                db.healthstone = {}
+                            end
+                            db.healthstone.enabled = val
+                        end
+                    },
+
+                    healthstoneThreshold = {
+                        type = "range",
+                        name = "灵魂石使用阈值（剩余生命值%）",
+                        desc = "当生命值低于此百分比时提示使用灵魂石。",
+                        order = 22,
+                        min = 1,
+                        max = 100,
+                        step = 1,
+                        width = "full",
+                        get = function()
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return 70
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healthstone then
+                                db.healthstone = {}
+                            end
+                            return db.healthstone.threshold or 70
+                        end,
+                        set = function(info, val)
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healthstone then
+                                db.healthstone = {}
+                            end
+                            db.healthstone.threshold = val
+                        end
+                    },
                 }
             },
             
