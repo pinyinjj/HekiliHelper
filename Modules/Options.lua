@@ -225,7 +225,7 @@ function Module:GetOptions()
                     enableHealthstone = {
                         type = "toggle",
                         name = "启用灵魂石提示",
-                        desc = "当背包中有灵魂石且生命值低时提示使用。",
+                        desc = "当背包中有灵魂石且生命值低时提示使用",
                         order = 21,
                         width = "full",
                         get = function()
@@ -252,8 +252,8 @@ function Module:GetOptions()
 
                     healthstoneThreshold = {
                         type = "range",
-                        name = "灵魂石使用阈值（剩余生命值%）",
-                        desc = "当生命值低于此百分比时提示使用灵魂石。",
+                        name = "灵魂石阈值",
+                        desc = "当生命值低于此百分比时提示使用灵魂石",
                         order = 22,
                         min = 1,
                         max = 100,
