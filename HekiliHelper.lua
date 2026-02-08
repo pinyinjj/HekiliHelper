@@ -47,8 +47,9 @@ function HekiliHelper:CreateDebugWindow()
     -- 创建编辑框（用于显示文本）
     local editBox = CreateFrame("EditBox", nil, frame)
     editBox:SetMultiLine(true)
-    editBox:SetFont("Fonts\\FRIZQT__.TTF", 12)
-    editBox:SetWidth(scrollFrame:GetWidth())
+    editBox:SetFontObject("ChatFontNormal")
+    editBox:SetWidth(scrollFrame:GetWidth() > 0 and scrollFrame:GetWidth() or 560)
+    editBox:SetAutoFocus(false)
     editBox:SetTextInsets(5, 5, 5, 5)
     editBox:SetScript("OnEscapePressed", function(self)
         self:ClearFocus()
@@ -72,7 +73,12 @@ function HekiliHelper:CreateDebugWindow()
     local closeButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
     closeButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 2, 2)
     closeButton:SetScript("OnClick", function()
+        self.DebugEnabled = false
+        if self.DB then
+            self.DB.profile.debugEnabled = false
+        end
         frame:Hide()
+        self:Print("|cFF00FF00[HekiliHelper]|r 调试模式已关闭")
     end)
     
     -- 创建清空按钮
@@ -91,9 +97,9 @@ function HekiliHelper:CreateDebugWindow()
     scrollBottomButton:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -10, 10)
     scrollBottomButton:SetText("滚动到底部")
     scrollBottomButton:SetScript("OnClick", function()
-        local min, max = scrollFrame:GetScrollRange()
+        local max = scrollFrame:GetVerticalScrollRange()
         if max > 0 then
-            scrollFrame:SetScrollOffset(max)
+            scrollFrame:SetVerticalScroll(max)
         end
     end)
     
@@ -115,11 +121,11 @@ function HekiliHelper:UpdateDebugWindow()
     self.DebugWindow.editBox:SetText(text)
     
     -- 滚动到底部
-    C_Timer.After(0.1, function()
+    C_Timer.After(0.01, function()
         if self.DebugWindow and self.DebugWindow.scrollFrame then
-            local min, max = self.DebugWindow.scrollFrame:GetScrollRange()
+            local max = self.DebugWindow.scrollFrame:GetVerticalScrollRange()
             if max > 0 then
-                self.DebugWindow.scrollFrame:SetScrollOffset(max)
+                self.DebugWindow.scrollFrame:SetVerticalScroll(max)
             end
         end
     end)
@@ -223,6 +229,7 @@ function HekiliHelper:OnInitialize()
     self:RegisterChatCommand("hhdebug", "ToggleDebug")
     self:RegisterChatCommand("hekilihelperdebug", "ToggleDebug")
     self:RegisterChatCommand("hhdebugwin", "ShowDebugWindow")
+    self:RegisterChatCommand("hhlist", "PrintRecommendationQueue")
     
     -- 创建模块对象（如果模块文件已加载）
     if not self.MeleeTargetIndicator then
@@ -358,6 +365,74 @@ function HekiliHelper:InitializeModules()
         end
     else
         self:DebugPrint("|cFFFF0000[HekiliHelper]|r 警告: HealingShamanSkills模块未找到（可能未加载）")
+    end
+    
+    -- Hook Hekili.Update 来自动打印队列（仅在调试模式开启时）
+    HekiliHelper.HookUtils.Hook(Hekili, "Update", function()
+        if self.DebugEnabled then
+            -- 延迟执行，确保其他模块已经完成了它们的插入
+            C_Timer.After(0.02, function()
+                self:PrintRecommendationQueue()
+            end)
+        end
+    end, "after")
+end
+
+-- 打印当前推荐队列（调试用）
+function HekiliHelper:PrintRecommendationQueue()
+    if not Hekili or not Hekili.DisplayPool then
+        return
+    end
+    
+    local found = false
+    local displayStrings = {}
+    
+    for dispName, UI in pairs(Hekili.DisplayPool) do
+        -- 检查显示是否激活且可见
+        if UI and UI.Active and UI.alpha > 0 and UI.Recommendations then
+            local queue = UI.Recommendations
+            local actions = {}
+            -- 检查前10个推荐位
+            for i = 1, 10 do
+                if queue[i] and queue[i].actionName and queue[i].actionName ~= "" then
+                    local name = queue[i].actionName
+                    
+                    -- 尝试从Hekili技能数据库获取更友好的显示名称
+                    if Hekili.Class and Hekili.Class.abilities and Hekili.Class.abilities[name] then
+                        local ability = Hekili.Class.abilities[name]
+                        if ability.name then
+                            name = ability.name
+                        end
+                    end
+                    
+                    -- 如果是我们的辅助插件插入的，添加特殊标记
+                    if queue[i].isMeleeIndicator then
+                        name = name .. "(近战)"
+                    elseif queue[i].isHealingShamanSkill then
+                        name = name .. "(治疗)"
+                    end
+                    
+                    table.insert(actions, string.format("[%d]%s", i, name))
+                end
+            end
+            
+            if #actions > 0 then
+                found = true
+                table.insert(displayStrings, string.format("%s: %s", dispName, table.concat(actions, " -> ")))
+            end
+        end
+    end
+    
+    if found then
+        local fullString = table.concat(displayStrings, " | ")
+        -- 只有当内容发生变化时才打印，避免在静止状态下刷屏
+        if fullString ~= self.LastQueueString then
+            self:DebugPrint("|cFFFFFF00[推荐队列]|r " .. fullString)
+            self.LastQueueString = fullString
+        end
+    elseif self.LastQueueString ~= "empty" then
+        self:DebugPrint("|cFFFFFF00[推荐队列]|r 当前没有激活的推荐")
+        self.LastQueueString = "empty"
     end
 end
 

@@ -424,41 +424,64 @@ function Module:CheckChainHeal()
     return false, nil
 end
 
--- 石爪图腾判断 (逻辑更新：只要不满血且冷却结束即释放)
+-- 石爪图腾判断 (逻辑更新：没有土图腾时触发)
 function Module:CheckStoneclawTotem()
-    -- 1. 基础检查：模块启用、技能可用
+    -- 1. 基础检查：模块启用
     local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
     if not db or not db.healingShaman or db.healingShaman.enabled == false then
+        HekiliHelper:DebugPrint("|cFFFF0000[Stoneclaw]|r 模块禁用")
         return false, nil
     end
 
     local stoneclawSpellID = 58582
     local glyphSpellID = 55438 -- 石爪图腾雕文
-    
-    -- 检查技能是否冷却结束
-    if not self:IsSpellReady(stoneclawSpellID) then 
-        return false, nil 
-    end
 
-    -- 2. 核心前提：必须装备了石爪图腾雕文才进入此保命逻辑
+    -- 2. 核心前提：必须装备了石爪图腾雕文
     local hasGlyph = false
     for i = 1, 6 do
-        local enabled, _, glyphSpell, _ = GetGlyphSocketInfo(i)
+        -- WotLK API: enabled, glyphType, glyphTooltipIndex, glyphSpellID, icon
+        local enabled, _, _, glyphSpell, _ = GetGlyphSocketInfo(i)
         if enabled and glyphSpell == glyphSpellID then
             hasGlyph = true
             break
         end
     end
     
-    if not hasGlyph then return false, nil end
-
-    -- 3. 生命值检查：只要不满血（<100%）就触发
-    -- 这样可以确保只要血量有任何缺口，且技能可用，就会利用雕文提供的护盾
-    if self:GetUnitHealthPercent("player") < 100 then
-        return true, "player"
+    if not hasGlyph then 
+        HekiliHelper:DebugPrint("|cFFFF0000[Stoneclaw]|r 未装备石爪图腾雕文")
+        return false, nil 
     end
 
-    return false, nil
+    -- 3. 战斗状态检查
+    if not UnitAffectingCombat("player") then
+        HekiliHelper:DebugPrint("|cFFFF0000[Stoneclaw]|r 不在战斗中")
+        return false, nil
+    end
+
+    -- 4. 技能可用性检查
+    if not self:IsSpellReady(stoneclawSpellID) then 
+        HekiliHelper:DebugPrint("|cFFFF0000[Stoneclaw]|r 技能冷却中")
+        return false, nil 
+    end
+
+    local usable, noMana = IsUsableSpell(stoneclawSpellID)
+    if not usable or noMana then
+        HekiliHelper:DebugPrint("|cFFFF0000[Stoneclaw]|r 技能不可用 (缺蓝或缺少图腾)")
+        return false, nil
+    end
+
+    -- 5. 触发条件：检查当前是否已有土图腾
+    if GetTotemInfo then
+        local haveTotem, totemName, _, _ = GetTotemInfo(2) -- 2是土图腾
+        if haveTotem then
+            HekiliHelper:DebugPrint(string.format("|cFFFF0000[Stoneclaw]|r 已存在土图腾: %s", totemName or "未知"))
+            return false, nil
+        end
+    end
+
+    -- 所有条件满足，触发推荐
+    HekiliHelper:DebugPrint("|cFF00FF00[Stoneclaw]|r 触发推荐 (无土图腾、战斗中、雕文存在)")
+    return true, "player"
 end
 
 -- 治疗波判断
@@ -1595,4 +1618,3 @@ function Module:CheckAndInsertSkill(skillDef, Queue, UI, dispName, targetUnit, i
     
     HekiliHelper:DebugPrint(string.format("|cFF00FF00[HealingShaman]|r 插入技能: %s", skillDef.displayName))
 end
-
