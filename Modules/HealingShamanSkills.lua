@@ -433,22 +433,36 @@ function Module:CheckStoneclawTotem()
         return false, nil
     end
 
-    local stoneclawSpellID = 58582
+    -- 新增：检查是否启用了石爪图腾雕文判断
+    if db.healingShaman.enableStoneclawGlyph ~= true then
+        return false, nil
+    end
+
+    local stoneclawName = GetSpellInfo(5730) -- 石爪图腾 (基础)
     local glyphSpellID = 55438 -- 石爪图腾雕文
+    local expectedGlyphName = GetSpellInfo(glyphSpellID)
 
     -- 2. 核心前提：必须装备了石爪图腾雕文
     local hasGlyph = false
+    local currentSpec = (GetActiveTalentGroup and GetActiveTalentGroup()) or 1
+    
     for i = 1, 6 do
         -- WotLK API: enabled, glyphType, glyphTooltipIndex, glyphSpellID, icon
-        local enabled, _, _, glyphSpell, _ = GetGlyphSocketInfo(i)
-        if enabled and glyphSpell == glyphSpellID then
-            hasGlyph = true
-            break
+        local enabled, _, _, glyphSpell, _ = GetGlyphSocketInfo(i, currentSpec)
+        if enabled and glyphSpell then
+            local currentGlyphName = GetSpellInfo(glyphSpell)
+            if HekiliHelper.DebugEnabled then
+                HekiliHelper:DebugPrint(string.format("|cFFFF0000[Stoneclaw]|r 检查插槽 %d: ID %s, 名称 %s", i, tostring(glyphSpell), tostring(currentGlyphName)))
+            end
+            if glyphSpell == glyphSpellID or glyphSpell == 55439 or glyphSpell == 43388 or glyphSpell == 63298 or (expectedGlyphName and currentGlyphName == expectedGlyphName) then
+                hasGlyph = true
+                break
+            end
         end
     end
     
     if not hasGlyph then 
-        HekiliHelper:DebugPrint("|cFFFF0000[Stoneclaw]|r 未装备石爪图腾雕文")
+        HekiliHelper:DebugPrint("|cFFFF0000[Stoneclaw]|r 未装备石爪图腾雕文 (检查了6个插槽)")
         return false, nil 
     end
 
@@ -459,23 +473,47 @@ function Module:CheckStoneclawTotem()
     end
 
     -- 4. 技能可用性检查
-    if not self:IsSpellReady(stoneclawSpellID) then 
+    -- 使用名称检查冷却，兼容不同等级
+    local start, duration, enabled = GetSpellCooldown(stoneclawName)
+    local isReady = not start or start == 0 or ((start + duration) - GetTime() <= 0)
+    
+    if not isReady then 
         HekiliHelper:DebugPrint("|cFFFF0000[Stoneclaw]|r 技能冷却中")
         return false, nil 
     end
 
-    local usable, noMana = IsUsableSpell(stoneclawSpellID)
+    local usable, noMana = IsUsableSpell(stoneclawName)
     if not usable or noMana then
         HekiliHelper:DebugPrint("|cFFFF0000[Stoneclaw]|r 技能不可用 (缺蓝或缺少图腾)")
         return false, nil
     end
 
     -- 5. 触发条件：检查当前是否已有土图腾
+    -- 打印当前所有图腾状态以供调试
+    if HekiliHelper.DebugEnabled then
+        local totems = {}
+        for i = 1, 4 do
+            local _, name, startTime, duration = GetTotemInfo(i)
+            if name and name ~= "" and duration > 0 then
+                local timeLeft = (startTime + duration) - GetTime()
+                if timeLeft > 0 then
+                    table.insert(totems, string.format("[%d]%s(%.1fs)", i, name, timeLeft))
+                end
+            end
+        end
+        HekiliHelper:DebugPrint(string.format("|cFFFF0000[Stoneclaw]|r 当前活动图腾: %s", #totems > 0 and table.concat(totems, ", ") or "无"))
+    end
+
     if GetTotemInfo then
-        local haveTotem, totemName, _, _ = GetTotemInfo(2) -- 2是土图腾
-        if haveTotem then
-            HekiliHelper:DebugPrint(string.format("|cFFFF0000[Stoneclaw]|r 已存在土图腾: %s", totemName or "未知"))
-            return false, nil
+        -- 1=火, 2=土, 3=水, 4=风
+        local haveTotem, totemName, startTime, duration = GetTotemInfo(2) 
+        -- 必须检查 duration 和剩余时间，因为有时 API 会返回已消失图腾的残余数据
+        if haveTotem and totemName and totemName ~= "" and duration > 0 then
+            local timeLeft = (startTime + duration) - GetTime()
+            if timeLeft > 0 then
+                HekiliHelper:DebugPrint(string.format("|cFFFF0000[Stoneclaw]|r 已存在土图腾: %s (剩余 %.1fs)", totemName, timeLeft))
+                return false, nil
+            end
         end
     end
 

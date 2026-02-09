@@ -264,6 +264,29 @@ function Module:GetOptions()
                             db.healingShaman.enabled = val
                         end
                     },
+                    enableStoneclawGlyph = {
+                        type = "toggle",
+                        name = "启用石爪图腾雕文检查",
+                        desc = "只有勾选此项且装备了石爪图腾雕文时，才会推荐使用石爪图腾作为减伤。",
+                        order = 10.05,
+                        width = "full",
+                        get = function()
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return false
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then db.healingShaman = {} end
+                            return db.healingShaman.enableStoneclawGlyph == true
+                        end,
+                        set = function(info, val)
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then db.healingShaman = {} end
+                            db.healingShaman.enableStoneclawGlyph = val
+                        end,
+                    },
                     enableHealingWave = {
                         type = "toggle",
                         name = "启用治疗波",

@@ -72,13 +72,24 @@ function HekiliHelper:CreateDebugWindow()
     -- 创建关闭按钮
     local closeButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
     closeButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 2, 2)
+    local parent = self -- 保存引用
     closeButton:SetScript("OnClick", function()
-        self.DebugEnabled = false
-        if self.DB then
-            self.DB.profile.debugEnabled = false
+        -- 彻底关闭调试模式
+        parent.DebugEnabled = false
+        if parent.DB then
+            parent.DB.profile.debugEnabled = false
         end
+        
+        -- 记录状态并隐藏
+        frame.ManuallyClosed = true
         frame:Hide()
-        self:Print("|cFF00FF00[HekiliHelper]|r 调试模式已关闭")
+        parent:Print("|cFF00FF00[HekiliHelper]|r 调试模式已关闭")
+        
+        -- 通知 AceConfig 刷新界面
+        if LibStub("AceConfigRegistry-3.0") then
+            LibStub("AceConfigRegistry-3.0"):NotifyChange("Hekili")
+            LibStub("AceConfigRegistry-3.0"):NotifyChange("HekiliHelper")
+        end
     end)
     
     -- 创建清空按钮
@@ -155,19 +166,29 @@ end
 
 -- 调试打印函数（只有在DebugEnabled为true时才打印到窗口）
 function HekiliHelper:DebugPrint(message)
-    if self.DebugEnabled then
-        -- 确保调试窗口已创建
-        if not self.DebugWindow then
-            self:CreateDebugWindow()
+    -- 强力检查：如果数据库中是关闭的，强制同步变量并拒绝任何操作
+    if self.DB and self.DB.profile and self.DB.profile.debugEnabled == false then
+        self.DebugEnabled = false
+    end
+
+    if not self.DebugEnabled then
+        if self.DebugWindow and self.DebugWindow:IsShown() then
+            self.DebugWindow:Hide()
         end
-        
-        -- 添加消息
-        self:AddDebugMessage(message)
-        
-        -- 显示窗口
-        if self.DebugWindow then
-            self.DebugWindow:Show()
-        end
+        return
+    end
+
+    -- 确保调试窗口已创建
+    if not self.DebugWindow then
+        self:CreateDebugWindow()
+    end
+    
+    -- 添加消息
+    self:AddDebugMessage(message)
+    
+    -- 最终显示检查
+    if self.DebugWindow and not self.DebugWindow.ManuallyClosed then
+        self.DebugWindow:Show()
     end
 end
 
@@ -292,6 +313,7 @@ function HekiliHelper:ToggleDebug(input)
         
         -- 显示调试窗口
         if self.DebugWindow then
+            self.DebugWindow.ManuallyClosed = false
             self.DebugWindow:Show()
         end
         
@@ -304,6 +326,12 @@ function HekiliHelper:ToggleDebug(input)
         
         self:Print("|cFF00FF00[HekiliHelper]|r 调试模式已关闭 - 调试窗口已隐藏")
     end
+    
+    -- 同步 UI 状态
+    if LibStub("AceConfigRegistry-3.0") then
+        LibStub("AceConfigRegistry-3.0"):NotifyChange("Hekili")
+        LibStub("AceConfigRegistry-3.0"):NotifyChange("HekiliHelper")
+    end
 end
 
 -- 显示/隐藏调试窗口的命令
@@ -314,8 +342,10 @@ function HekiliHelper:ShowDebugWindow(input)
     
     if self.DebugWindow:IsShown() then
         self.DebugWindow:Hide()
+        self.DebugWindow.ManuallyClosed = true
         self:Print("|cFF00FF00[HekiliHelper]|r 调试窗口已隐藏")
     else
+        self.DebugWindow.ManuallyClosed = false
         self.DebugWindow:Show()
         self:Print("|cFF00FF00[HekiliHelper]|r 调试窗口已显示")
     end
