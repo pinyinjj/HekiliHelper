@@ -226,6 +226,16 @@ function HekiliHelper:OnInitialize()
                 healingWaveThreshold = 30,
                 lesserHealingWaveThreshold = 90,
             },
+            healingPriest = {
+                enabled = true,
+                shieldThreshold = 95,
+                pomThreshold = 99,
+                penanceThreshold = 80,
+                renewThreshold = 90,
+                flashHealThreshold = 70,
+                greaterHealThreshold = 40,
+                cohThreshold = 85,
+            },
         }
     }
     
@@ -265,6 +275,20 @@ function HekiliHelper:OnInitialize()
         self:DebugPrint("|cFF00FF00[HekiliHelper]|r 创建HealingShamanSkills模块对象")
     else
         self:DebugPrint("|cFF00FF00[HekiliHelper]|r HealingShamanSkills模块对象已存在")
+    end
+
+    if not self.HealingPriestSkills then
+        self.HealingPriestSkills = {}
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r 创建HealingPriestSkills模块对象")
+    else
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r HealingPriestSkills模块对象已存在")
+    end
+    
+    if not self.BlankIcon then
+        self.BlankIcon = {}
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r 创建BlankIcon模块对象")
+    else
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r BlankIcon模块对象已存在")
     end
 end
 
@@ -385,16 +409,39 @@ function HekiliHelper:InitializeModules()
         self:Print("|cFFFF0000[HekiliHelper]|r 错误: MeleeTargetIndicator模块未找到")
     end
     
-    if self.HealingShamanSkills then
-        self:DebugPrint("|cFF00FF00[HekiliHelper]|r 找到HealingShamanSkills模块，开始初始化...")
-        local success = self.HealingShamanSkills:Initialize()
-        if success then
-            self:DebugPrint("|cFF00FF00[HekiliHelper]|r HealingShamanSkills模块初始化成功")
+        if self.HealingShamanSkills then
+            self:DebugPrint("|cFF00FF00[HekiliHelper]|r 找到HealingShamanSkills模块，开始初始化...")
+            local success = self.HealingShamanSkills:Initialize()
+            if success then
+                self:DebugPrint("|cFF00FF00[HekiliHelper]|r HealingShamanSkills模块初始化成功")
+            else
+                self:Print("|cFFFF0000[HekiliHelper]|r HealingShamanSkills模块初始化失败")
+            end
         else
-            self:Print("|cFFFF0000[HekiliHelper]|r HealingShamanSkills模块初始化失败")
+            self:DebugPrint("|cFFFF0000[HekiliHelper]|r 警告: HealingShamanSkills模块未找到（可能未加载）")
+        end
+    
+        if self.HealingPriestSkills then
+            self:DebugPrint("|cFF00FF00[HekiliHelper]|r 找到HealingPriestSkills模块，开始初始化...")
+            local success = self.HealingPriestSkills:Initialize()
+            if success then
+                self:DebugPrint("|cFF00FF00[HekiliHelper]|r HealingPriestSkills模块初始化成功")
+            else
+                self:Print("|cFFFF0000[HekiliHelper]|r HealingPriestSkills模块初始化失败")
+            end
+        else
+            self:DebugPrint("|cFFFF0000[HekiliHelper]|r 警告: HealingPriestSkills模块未找到（可能未加载）")
+        end
+        
+        if self.BlankIcon then        self:DebugPrint("|cFF00FF00[HekiliHelper]|r 找到BlankIcon模块，开始初始化...")
+        local success = self.BlankIcon:Initialize()
+        if success then
+            self:DebugPrint("|cFF00FF00[HekiliHelper]|r BlankIcon模块初始化成功")
+        else
+            self:Print("|cFFFF0000[HekiliHelper]|r BlankIcon模块初始化失败")
         end
     else
-        self:DebugPrint("|cFFFF0000[HekiliHelper]|r 警告: HealingShamanSkills模块未找到（可能未加载）")
+        self:DebugPrint("|cFFFF0000[HekiliHelper]|r 警告: BlankIcon模块未找到（可能未加载）")
     end
     
     -- Hook Hekili.Update 来自动打印队列（仅在调试模式开启时）

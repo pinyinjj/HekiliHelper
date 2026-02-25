@@ -498,6 +498,94 @@ function Module:GetOptions()
                 }
             },
             
+            healingPriest = {
+                type = "group",
+                name = "治疗牧师",
+                order = 3.2,
+                args = {
+                    header = {
+                        type = "header",
+                        name = "治疗牧师设置",
+                        order = 1,
+                        width = "full"
+                    },
+                    
+                    enabled = {
+                        type = "toggle",
+                        name = "启用",
+                        desc = "启用或禁用治疗牧师技能推荐功能。",
+                        order = 10,
+                        width = "full",
+                        get = function() return HekiliHelper.DB.profile.healingPriest.enabled ~= false end,
+                        set = function(info, val) HekiliHelper.DB.profile.healingPriest.enabled = val end
+                    },
+                    
+                    shieldThreshold = {
+                        type = "range",
+                        name = "真言术：盾阈值",
+                        order = 11,
+                        min = 1, max = 100, step = 1,
+                        get = function() return HekiliHelper.DB.profile.healingPriest.shieldThreshold or 95 end,
+                        set = function(info, val) HekiliHelper.DB.profile.healingPriest.shieldThreshold = val end
+                    },
+                    
+                    pomThreshold = {
+                        type = "range",
+                        name = "愈合祷言阈值",
+                        order = 12,
+                        min = 1, max = 100, step = 1,
+                        get = function() return HekiliHelper.DB.profile.healingPriest.pomThreshold or 99 end,
+                        set = function(info, val) HekiliHelper.DB.profile.healingPriest.pomThreshold = val end
+                    },
+                    
+                    penanceThreshold = {
+                        type = "range",
+                        name = "苦修阈值",
+                        order = 13,
+                        min = 1, max = 100, step = 1,
+                        get = function() return HekiliHelper.DB.profile.healingPriest.penanceThreshold or 80 end,
+                        set = function(info, val) HekiliHelper.DB.profile.healingPriest.penanceThreshold = val end
+                    },
+                    
+                    renewThreshold = {
+                        type = "range",
+                        name = "恢复阈值",
+                        order = 14,
+                        min = 1, max = 100, step = 1,
+                        get = function() return HekiliHelper.DB.profile.healingPriest.renewThreshold or 90 end,
+                        set = function(info, val) HekiliHelper.DB.profile.healingPriest.renewThreshold = val end
+                    },
+                    
+                    flashHealThreshold = {
+                        type = "range",
+                        name = "快速治疗阈值",
+                        order = 15,
+                        min = 1, max = 100, step = 1,
+                        get = function() return HekiliHelper.DB.profile.healingPriest.flashHealThreshold or 70 end,
+                        set = function(info, val) HekiliHelper.DB.profile.healingPriest.flashHealThreshold = val end
+                    },
+                    
+                    greaterHealThreshold = {
+                        type = "range",
+                        name = "强效治疗术阈值",
+                        order = 16,
+                        min = 1, max = 100, step = 1,
+                        get = function() return HekiliHelper.DB.profile.healingPriest.greaterHealThreshold or 40 end,
+                        set = function(info, val) HekiliHelper.DB.profile.healingPriest.greaterHealThreshold = val end
+                    },
+                    
+                    cohThreshold = {
+                        type = "range",
+                        name = "治疗环阈值",
+                        desc = "当3个及以上队友血量低于此百分比时推荐使用治疗环",
+                        order = 17,
+                        min = 1, max = 100, step = 1,
+                        get = function() return HekiliHelper.DB.profile.healingPriest.cohThreshold or 85 end,
+                        set = function(info, val) HekiliHelper.DB.profile.healingPriest.cohThreshold = val end
+                    },
+                }
+            },
+            
             about = {
                 type = "group",
                 name = "关于",

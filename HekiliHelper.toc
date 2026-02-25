@@ -12,4 +12,6 @@ HekiliHelper.lua
 Modules/Options.lua
 Modules/MeleeTargetIndicator.lua
 Modules/HealingShamanSkills.lua
+Modules/HealingPriestSkills.lua
+Modules/BlankIcon.lua
 

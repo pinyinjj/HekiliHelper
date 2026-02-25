@@ -327,7 +327,8 @@ function Module:InsertMeleeIndicator()
     -- 遍历所有激活的显示
     local processedCount = 0
     for dispName, UI in pairs(displays) do
-        if UI and UI.Active and UI.alpha > 0 then
+        -- 彻底忽略 AOE 和其他非 Primary 显示
+        if dispName == "Primary" and UI and UI.Active and UI.alpha > 0 then
             processedCount = processedCount + 1
             self:InsertIndicatorForDisplay(dispName, UI)
         end
@@ -340,8 +341,8 @@ end
 
 -- 为特定显示插入指示器
 function Module:InsertIndicatorForDisplay(dispName, UI)
-    -- 只对Primary和AOE显示插入图标
-    if dispName ~= "Primary" and dispName ~= "AOE" then
+    -- 只对 Primary 显示插入图标，不处理 AOE
+    if dispName ~= "Primary" then
         return
     end
     
