@@ -1324,11 +1324,14 @@ function Module:InsertSkillForDisplay(dispName, UI)
     local skillsToInsert = {}
     local skillsToInsertMap = {}  -- 用于快速查找
     for _, skillDef in ipairs(self.SkillDefinitions) do
-        local shouldInsert, targetUnit = skillDef.checkFunc(self)
-        
-        if shouldInsert then
-            table.insert(skillsToInsert, {skillDef = skillDef, targetUnit = targetUnit})
-            skillsToInsertMap[skillDef.actionName] = true
+        -- 基础判断：必须已学习该技能
+        if IsSpellKnown(skillDef.spellID) then
+            local shouldInsert, targetUnit = skillDef.checkFunc(self)
+            
+            if shouldInsert then
+                table.insert(skillsToInsert, {skillDef = skillDef, targetUnit = targetUnit})
+                skillsToInsertMap[skillDef.actionName] = true
+            end
         end
     end
     

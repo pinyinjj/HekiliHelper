@@ -23,55 +23,18 @@ local Module = HekiliHelper.HealingPriestSkills
 
 -- 模块初始化
 function Module:Initialize()
-    if not Hekili then return false end
+    if not Hekili then 
+        HekiliHelper:Print("|cFFFF0000[HealingPriest]|r 错误: Hekili对象不存在")
+        return false 
+    end
     
-    HekiliHelper:DebugPrint("|cFF00FF00[HealingPriest]|r 开始Hook Hekili.Update...")
+    HekiliHelper:DebugPrint("|cFF00FF00[HealingPriest]|r 开始初始化...")
     
     local success = HekiliHelper.HookUtils.Wrap(Hekili, "Update", function(oldFunc, self, ...)
-        -- 保存我们的技能
-        local savedSkills = {}
-        if Hekili and Hekili.DisplayPool then
-            for dispName, UI in pairs(Hekili.DisplayPool) do
-                if UI and UI.Recommendations then
-                    local Queue = UI.Recommendations
-                    savedSkills[dispName] = {}
-                    for i = 1, 4 do
-                        if Queue[i] and Queue[i].isHealingPriestSkill then
-                            savedSkills[dispName][i] = {}
-                            for k, v in pairs(Queue[i]) do
-                                savedSkills[dispName][i][k] = v
-                            end
-                        end
-                    end
-                end
-            end
-        end
-        
         local result = oldFunc(self, ...)
-        
-        C_Timer.After(0.001, function()
-            -- 恢复被清除的技能
-            if Hekili and Hekili.DisplayPool then
-                for dispName, saved in pairs(savedSkills) do
-                    local UI = Hekili.DisplayPool[dispName]
-                    if UI and UI.Recommendations then
-                        local Queue = UI.Recommendations
-                        for i, savedSlot in pairs(saved) do
-                            if not Queue[i] or not Queue[i].isHealingPriestSkill then
-                                Queue[i] = {}
-                                for k, v in pairs(savedSlot) do
-                                    Queue[i][k] = v
-                                end
-                                UI.NewRecommendations = true
-                            end
-                        end
-                    end
-                end
-            end
-            
+        C_Timer.After(0.005, function()
             Module:InsertHealingSkills()
         end)
-        
         return result
     end)
     
@@ -87,8 +50,22 @@ Module.SkillDefinitions = {
         actionName = "inner_fire",
         spellID = 48168,
         priority = 1,
-        checkFunc = function(self) return self:CheckInnerFire() end,
+        checkFunc = function(self) return self:CheckBuff("player", 48168, "心灵之火", "Inner Fire") end,
         displayName = "心灵之火"
+    },
+    {
+        actionName = "power_word_fortitude",
+        spellID = 48063,
+        priority = 1.1,
+        checkFunc = function(self) return self:CheckBuff("player", 48063, "真言术：韧", "Power Word: Fortitude", 48161) end,
+        displayName = "真言术：韧"
+    },
+    {
+        actionName = "divine_spirit",
+        spellID = 48073,
+        priority = 1.2,
+        checkFunc = function(self) return self:CheckBuff("player", 48073, "神圣之灵", "Divine Spirit", 48170) end,
+        displayName = "神圣之灵"
     },
     {
         actionName = "power_word_shield",
@@ -139,57 +116,40 @@ Module.SkillDefinitions = {
         checkFunc = function(self) return self:CheckGreaterHeal() end,
         displayName = "强效治疗术"
     },
-    {
-        actionName = "dispel_magic",
-        spellID = 527,
-        priority = 9,
-        checkFunc = function(self) return self:CheckDispel() end,
-        displayName = "驱散魔法"
-    },
 }
 
 -- ============================================
 -- 技能判断函数
 -- ============================================
 
-function Module:CheckInnerFire()
-    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
-    if not db or not db.healingPriest or db.healingPriest.enabled == false then return false end
-    
-    if not HekiliHelper.HealingShamanSkills.HasBuff(self, "player", "心灵之火") and 
-       not HekiliHelper.HealingShamanSkills.HasBuff(self, "player", "Inner Fire") then
-        return true, "player"
+-- 通用Buff检查 (支持小Buff和大Buff ID)
+function Module:CheckBuff(unit, spellID, nameCN, nameEN, groupSpellID)
+    -- 已经在战斗中或者没有Buff时推荐
+    if not self:HasBuff(unit, spellID) then
+        -- 如果有大Buff版本，也检查一下
+        if groupSpellID and self:HasBuff(unit, groupSpellID) then
+            return false
+        end
+        
+        -- 检查名称 (双保险)
+        if self:HasBuffByName(unit, nameCN) or self:HasBuffByName(unit, nameEN) then
+            return false
+        end
+        
+        return true, unit
     end
     return false
 end
 
 function Module:CheckShield()
-    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
-    if not db or not db.healingPriest or db.healingPriest.enabled == false then return false end
-    
     local targetUnit = self:GetBestTarget()
     if not targetUnit then return false end
     
-    local hp = HekiliHelper.HealingShamanSkills.GetUnitHealthPercent(self, targetUnit)
-    local threshold = db.healingPriest.shieldThreshold or 95
+    local hp = self:GetHealthPct(targetUnit)
+    local threshold = HekiliHelper.DB.profile.healingPriest.shieldThreshold or 95
     
     if hp <= threshold then
-        -- 检查是否有 灵魂虚弱 (Weakened Soul)
-        local hasWeakenedSoul = false
-        for i = 1, 40 do
-            local name = UnitDebuff(targetUnit, i)
-            if not name then break end
-            if name == "灵魂虚弱" or name == "Weakened Soul" then
-                hasWeakenedSoul = true
-                break
-            end
-        end
-        
-        -- 检查是否已有盾
-        local hasShield = HekiliHelper.HealingShamanSkills.HasBuff(self, targetUnit, "真言术：盾") or 
-                          HekiliHelper.HealingShamanSkills.HasBuff(self, targetUnit, "Power Word: Shield")
-        
-        if not hasWeakenedSoul and not hasShield then
+        if not self:HasDebuff(targetUnit, 6788) and not self:HasBuff(targetUnit, 48066) then
             return true, targetUnit
         end
     end
@@ -197,51 +157,30 @@ function Module:CheckShield()
 end
 
 function Module:CheckPOM()
-    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
-    if not db or not db.healingPriest or db.healingPriest.enabled == false then return false end
-    
     if not self:IsSpellReady(48113) then return false end
-    
     local targetUnit = self:GetBestTarget()
     if not targetUnit then return false end
-    
-    -- 愈合祷言通常丢给坦或者正在掉血的人
-    local hp = HekiliHelper.HealingShamanSkills.GetUnitHealthPercent(self, targetUnit)
-    if hp <= (db.healingPriest.pomThreshold or 99) then
+    if self:GetHealthPct(targetUnit) <= (HekiliHelper.DB.profile.healingPriest.pomThreshold or 99) then
         return true, targetUnit
     end
     return false
 end
 
 function Module:CheckPenance()
-    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
-    if not db or not db.healingPriest or db.healingPriest.enabled == false then return false end
-    
     if not self:IsSpellReady(53007) then return false end
-    
     local targetUnit = self:GetBestTarget()
     if not targetUnit then return false end
-    
-    local hp = HekiliHelper.HealingShamanSkills.GetUnitHealthPercent(self, targetUnit)
-    if hp <= (db.healingPriest.penanceThreshold or 80) then
+    if self:GetHealthPct(targetUnit) <= (HekiliHelper.DB.profile.healingPriest.penanceThreshold or 80) then
         return true, targetUnit
     end
     return false
 end
 
 function Module:CheckRenew()
-    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
-    if not db or not db.healingPriest or db.healingPriest.enabled == false then return false end
-    
     local targetUnit = self:GetBestTarget()
     if not targetUnit then return false end
-    
-    local hasRenew = HekiliHelper.HealingShamanSkills.HasBuff(self, targetUnit, "恢复") or 
-                     HekiliHelper.HealingShamanSkills.HasBuff(self, targetUnit, "Renew")
-                     
-    if not hasRenew then
-        local hp = HekiliHelper.HealingShamanSkills.GetUnitHealthPercent(self, targetUnit)
-        if hp <= (db.healingPriest.renewThreshold or 90) then
+    if not self:HasBuff(targetUnit, 48068) then
+        if self:GetHealthPct(targetUnit) <= (HekiliHelper.DB.profile.healingPriest.renewThreshold or 90) then
             return true, targetUnit
         end
     end
@@ -249,164 +188,144 @@ function Module:CheckRenew()
 end
 
 function Module:CheckFlashHeal()
-    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
-    if not db or not db.healingPriest or db.healingPriest.enabled == false then return false end
-    
     local targetUnit = self:GetBestTarget()
     if not targetUnit then return false end
-    
-    local hp = HekiliHelper.HealingShamanSkills.GetUnitHealthPercent(self, targetUnit)
-    if hp <= (db.healingPriest.flashHealThreshold or 70) then
+    if self:GetHealthPct(targetUnit) <= (HekiliHelper.DB.profile.healingPriest.flashHealThreshold or 70) then
         return true, targetUnit
     end
     return false
 end
 
 function Module:CheckGreaterHeal()
-    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
-    if not db or not db.healingPriest or db.healingPriest.enabled == false then return false end
-    
     local targetUnit = self:GetBestTarget()
     if not targetUnit then return false end
-    
-    local hp = HekiliHelper.HealingShamanSkills.GetUnitHealthPercent(self, targetUnit)
-    if hp <= (db.healingPriest.greaterHealThreshold or 40) then
+    if self:GetHealthPct(targetUnit) <= (HekiliHelper.DB.profile.healingPriest.greaterHealThreshold or 40) then
         return true, targetUnit
     end
     return false
 end
 
 function Module:CheckCircleOfHealing()
-    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
-    if not db or not db.healingPriest or db.healingPriest.enabled == false then return false end
-    
     if not self:IsSpellReady(48089) then return false end
-    
-    -- 检查群体掉血
-    local threshold = db.healingPriest.cohThreshold or 85
     local count = 0
+    local threshold = HekiliHelper.DB.profile.healingPriest.cohThreshold or 85
+    local units = IsInRaid() and 40 or (IsInGroup() and 5 or 1)
     
-    local units = HekiliHelper.HealingShamanSkills.GetFriendlyUnits(self)
-    for _, unit in ipairs(units) do
-        if HekiliHelper.HealingShamanSkills.IsValidHealingTarget(self, unit) then
-            if HekiliHelper.HealingShamanSkills.GetUnitHealthPercent(self, unit) <= threshold then
-                count = count + 1
-            end
+    for i = 1, units do
+        local u = (units == 1) and "player" or (IsInRaid() and "raid"..i or (i==5 and "player" or "party"..i))
+        if self:IsFriendlyTarget(u) and self:GetHealthPct(u) <= threshold then
+            count = count + 1
         end
     end
-    
-    if count >= 3 then
-        return true, "mouseover" -- 通常环是对鼠标指向的人用
+    return count >= 3, "mouseover"
+end
+
+-- ============================================
+-- 工具函数
+-- ============================================
+
+function Module:IsFriendlyTarget(unit)
+    return unit and UnitExists(unit) and UnitIsFriend("player", unit) and not UnitIsDead(unit) and UnitIsVisible(unit)
+end
+
+function Module:GetHealthPct(unit)
+    local m = UnitHealthMax(unit)
+    return (m > 0) and (UnitHealth(unit) / m * 100) or 100
+end
+
+function Module:HasBuff(unit, spellID)
+    for i = 1, 40 do
+        local _, _, _, _, _, _, _, _, _, sID = UnitBuff(unit, i)
+        if not _ then break end
+        if sID == spellID then return true end
     end
     return false
 end
 
-function Module:CheckDispel()
-    -- 简单的驱散检查逻辑可以以后扩展
+function Module:HasBuffByName(unit, name)
+    if not name then return false end
+    for i = 1, 40 do
+        local bName = UnitBuff(unit, i)
+        if not bName then break end
+        if bName == name then return true end
+    end
     return false
 end
 
--- ============================================
--- 辅助函数
--- ============================================
-
-function Module:GetBestTarget()
-    if HekiliHelper.HealingShamanSkills.IsValidHealingTarget(self, "mouseover") then
-        return "mouseover"
-    elseif HekiliHelper.HealingShamanSkills.IsValidHealingTarget(self, "target") then
-        return "target"
-    elseif HekiliHelper.HealingShamanSkills.IsValidHealingTarget(self, "focus") then
-        return "focus"
+function Module:HasDebuff(unit, spellID)
+    for i = 1, 40 do
+        local _, _, _, _, _, _, _, _, _, sID = UnitDebuff(unit, i)
+        if not _ then break end
+        if sID == spellID then return true end
     end
-    return nil
+    return false
 end
 
 function Module:IsSpellReady(spellID)
-    return HekiliHelper.HealingShamanSkills.IsSpellReady(self, spellID)
+    local s, d = GetSpellCooldown(spellID)
+    return (not s or s == 0 or (s + d - GetTime() <= 0))
+end
+
+function Module:GetBestTarget()
+    if self:IsFriendlyTarget("mouseover") then return "mouseover" end
+    if self:IsFriendlyTarget("target") then return "target" end
+    if self:IsFriendlyTarget("focus") then return "focus" end
+    return nil
 end
 
 -- ============================================
--- 主插入函数
+-- 主逻辑
 -- ============================================
 
 function Module:InsertHealingSkills()
-    if not Hekili then return end
+    if not Hekili or not Hekili.DisplayPool then return end
+    local db = HekiliHelper.DB.profile
+    if not db.enabled or not db.healingPriest or not db.healingPriest.enabled then return end
     
-    local db = HekiliHelper and HekiliHelper.DB and HekiliHelper.DB.profile
-    if not db or not db.healingPriest or db.healingPriest.enabled == false then return end
-    
-    local displays = Hekili.DisplayPool
-    if not displays then return end
-    
-    for dispName, UI in pairs(displays) do
+    for dispName, UI in pairs(Hekili.DisplayPool) do
         if (dispName == "Primary" or dispName == "AOE") and UI and UI.Active and UI.alpha > 0 then
-            self:InsertSkillForDisplay(dispName, UI)
-        end
-    end
-end
-
-function Module:InsertSkillForDisplay(dispName, UI)
-    local Queue = UI.Recommendations
-    if not Queue then return end
-    
-    -- 获取符合条件的技能
-    local skillsToInsert = {}
-    for _, skillDef in ipairs(self.SkillDefinitions) do
-        local shouldInsert, targetUnit = skillDef.checkFunc(self)
-        if shouldInsert then
-            table.insert(skillsToInsert, {def = skillDef, target = targetUnit})
-        end
-    end
-    
-    -- 插入逻辑参考萨满模块
-    for i, data in ipairs(skillsToInsert) do
-        if i > 4 then break end -- 最多占4个位
-        
-        local skillDef = data.def
-        local targetUnit = data.target
-        
-        local ability = HekiliHelper.HealingShamanSkills.GetSkillFromHekili(self, skillDef.actionName)
-        if not ability then
-            -- 创建虚拟ability
-            local spellName, _, spellTexture = GetSpellInfo(skillDef.spellID)
-            if spellName then
-                Hekili.Class.abilities[skillDef.actionName] = {
-                    key = skillDef.actionName,
-                    name = spellName,
-                    texture = spellTexture,
-                    id = skillDef.spellID,
-                    cast = 0,
-                    gcd = "off",
-                }
-                ability = Hekili.Class.abilities[skillDef.actionName]
-            end
-        end
-        
-        if ability and self:IsSpellReady(skillDef.spellID) then
-            -- 寻找空位或覆盖
-            local insertPos = i
+            local Queue = UI.Recommendations
+            if not Queue then return end
             
-            local originalSlot = nil
-            if Queue[insertPos] and not Queue[insertPos].isHealingPriestSkill and Queue[insertPos].actionName ~= "" then
-                originalSlot = {}
-                for k, v in pairs(Queue[insertPos]) do originalSlot[k] = v end
+            -- 清除旧牧师技能
+            for i = 1, 4 do
+                if Queue[i] and Queue[i].isHealingPriestSkill then Queue[i] = nil end
             end
             
-            Queue[insertPos] = Queue[insertPos] or {}
-            local slot = Queue[insertPos]
-            
-            slot.index = insertPos
-            slot.actionName = skillDef.actionName
-            slot.actionID = skillDef.spellID
-            slot.texture = ability.texture
-            slot.time = 0
-            slot.exact_time = GetTime()
-            slot.display = dispName
-            slot.isHealingPriestSkill = true
-            slot.originalRecommendation = originalSlot
-            slot.action = ability
-            
-            UI.NewRecommendations = true
+            local skillsFound = 0
+            for _, skillDef in ipairs(self.SkillDefinitions) do
+                -- 必须已学习
+                if GetSpellInfo(skillDef.spellID) then
+                    local shouldInsert, targetUnit = skillDef.checkFunc(self)
+                    if shouldInsert and skillsFound < 4 then
+                        skillsFound = skillsFound + 1
+                        
+                        local ability = Hekili.Class.abilities[skillDef.actionName]
+                        if not ability then
+                            local n, _, t = GetSpellInfo(skillDef.spellID)
+                            Hekili.Class.abilities[skillDef.actionName] = {
+                                key = skillDef.actionName, name = n, texture = t, id = skillDef.spellID, cast = 0, gcd = "off"
+                            }
+                            ability = Hekili.Class.abilities[skillDef.actionName]
+                        end
+                        
+                        Queue[skillsFound] = Queue[skillsFound] or {}
+                        local slot = Queue[skillsFound]
+                        slot.index = skillsFound
+                        slot.actionName = skillDef.actionName
+                        slot.actionID = skillDef.spellID
+                        slot.texture = ability.texture
+                        slot.time = 0
+                        slot.exact_time = GetTime()
+                        slot.display = dispName
+                        slot.isHealingPriestSkill = true
+                        slot.action = ability
+                        
+                        UI.NewRecommendations = true
+                        HekiliHelper:DebugPrint(string.format("|cFF00FFFF[HealingPriest]|r 推荐 %s", skillDef.displayName))
+                    end
+                end
+            end
         end
     end
 end

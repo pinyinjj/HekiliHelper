@@ -290,6 +290,13 @@ function HekiliHelper:OnInitialize()
     else
         self:DebugPrint("|cFF00FF00[HekiliHelper]|r BlankIcon模块对象已存在")
     end
+
+    if not self.UIModifier then
+        self.UIModifier = {}
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r 创建UIModifier模块对象")
+    else
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r UIModifier模块对象已存在")
+    end
 end
 
 function HekiliHelper:OnEnable()
@@ -433,18 +440,24 @@ function HekiliHelper:InitializeModules()
             self:DebugPrint("|cFFFF0000[HekiliHelper]|r 警告: HealingPriestSkills模块未找到（可能未加载）")
         end
         
-        if self.BlankIcon then        self:DebugPrint("|cFF00FF00[HekiliHelper]|r 找到BlankIcon模块，开始初始化...")
-        local success = self.BlankIcon:Initialize()
-        if success then
-            self:DebugPrint("|cFF00FF00[HekiliHelper]|r BlankIcon模块初始化成功")
-        else
-            self:Print("|cFFFF0000[HekiliHelper]|r BlankIcon模块初始化失败")
-        end
-    else
-        self:DebugPrint("|cFFFF0000[HekiliHelper]|r 警告: BlankIcon模块未找到（可能未加载）")
-    end
-    
-    -- Hook Hekili.Update 来自动打印队列（仅在调试模式开启时）
+            if self.BlankIcon then
+                self:DebugPrint("|cFF00FF00[HekiliHelper]|r 找到BlankIcon模块，开始初始化...")
+                local success = self.BlankIcon:Initialize()
+                if success then
+                    self:DebugPrint("|cFF00FF00[HekiliHelper]|r BlankIcon模块初始化成功")
+                else
+                    self:Print("|cFFFF0000[HekiliHelper]|r BlankIcon模块初始化失败")
+                end
+            else
+                self:DebugPrint("|cFFFF0000[HekiliHelper]|r 警告: BlankIcon模块未找到（可能未加载）")
+            end
+        
+            if self.UIModifier then
+                self:DebugPrint("|cFF00FF00[HekiliHelper]|r 找到UIModifier模块，开始初始化...")
+                self.UIModifier:Initialize()
+            end
+            
+            -- Hook Hekili.Update 来自动打印队列（仅在调试模式开启时）
     HekiliHelper.HookUtils.Hook(Hekili, "Update", function()
         if self.DebugEnabled then
             -- 延迟执行，确保其他模块已经完成了它们的插入
