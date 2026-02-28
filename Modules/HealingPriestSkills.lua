@@ -32,7 +32,7 @@ function Module:Initialize()
     
     local success = HekiliHelper.HookUtils.Wrap(Hekili, "Update", function(oldFunc, self, ...)
         local result = oldFunc(self, ...)
-        C_Timer.After(0.005, function()
+        C_Timer.After(0.001, function()
             Module:InsertHealingSkills()
         end)
         return result
@@ -64,8 +64,22 @@ Module.SkillDefinitions = {
         actionName = "divine_spirit",
         spellID = 48073,
         priority = 1.2,
-        checkFunc = function(self) return self:CheckBuff("player", 48073, "神圣之灵", "Divine Spirit", 48170) end,
+        checkFunc = function(self) 
+            -- 如果拥有 邪能智力 (Fel Intellect) ID: 54424，不推荐神圣之灵
+            if self:HasBuff("player", 54424) or self:HasBuffByName("player", "邪能智力") or self:HasBuffByName("player", "Fel Intellect") then
+                return false
+            end
+            -- 检查自身是否拥有神圣之灵或其群体版本（精神祷言）
+            return self:CheckBuff("player", 48073, "神圣之灵", "Divine Spirit", 48170) 
+        end,
         displayName = "神圣之灵"
+    },
+    {
+        actionName = "flash_heal",
+        spellID = 48061,
+        priority = 1.5,
+        checkFunc = function(self) return self:CheckSurgeOfLight() end,
+        displayName = "快速治疗(瞬发)"
     },
     {
         actionName = "power_word_shield",
@@ -104,7 +118,7 @@ Module.SkillDefinitions = {
     },
     {
         actionName = "flash_heal",
-        spellID = 48063,
+        spellID = 48061,
         priority = 7,
         checkFunc = function(self) return self:CheckFlashHeal() end,
         displayName = "快速治疗"
@@ -145,12 +159,66 @@ function Module:CheckShield()
     local targetUnit = self:GetBestTarget()
     if not targetUnit then return false end
     
-    local hp = self:GetHealthPct(targetUnit)
-    local threshold = HekiliHelper.DB.profile.healingPriest.shieldThreshold or 95
+    local missingHP = self:GetMissingHealth(targetUnit)
+    local sp = self:GetSpellPower()
+    local coeff = HekiliHelper.DB.profile.healingPriest.effectiveCoefficient or 0.8
     
-    if hp <= threshold then
-        if not self:HasDebuff(targetUnit, 6788) and not self:HasBuff(targetUnit, 48066) then
-            return true, targetUnit
+    if missingHP >= (sp * coeff) then
+        -- 虚弱灵魂 (Weakened Soul) ID: 6788
+        local hasWeakenedSoul = self:HasDebuff(targetUnit, 6788)
+        if not hasWeakenedSoul then
+            local wsName = GetSpellInfo(6788)
+            if wsName and self:HasDebuffByName(targetUnit, wsName) then
+                hasWeakenedSoul = true
+            end
+        end
+
+        if not hasWeakenedSoul then
+            -- 检查盾Buff (通过名称检查以支持所有等级)
+            local pwsName = GetSpellInfo(17) -- Rank 1 ID to get name
+            local hasShield = false
+            if pwsName and self:HasBuffByName(targetUnit, pwsName) then
+                hasShield = true
+            elseif self:HasBuff(targetUnit, 48066) then
+                hasShield = true
+            end
+            
+            if not hasShield then
+                return true, targetUnit
+            end
+        end
+    end
+    return false
+end
+
+function Module:CheckSurgeOfLight()
+    -- 圣光涌动 (Surge of Light) ID: 33151
+    local expirationTime = self:GetBuffExpirationTime("player", 33151)
+    if not expirationTime then
+        local surgeName = GetSpellInfo(33151)
+        if surgeName then
+            expirationTime = self:GetBuffExpirationTimeByName("player", surgeName)
+        end
+    end
+
+    if expirationTime then
+        local remaining = expirationTime - GetTime()
+        if remaining > 0 then
+            -- 动态系数逻辑：10秒=100%, 1秒=10% (线性衰减)
+            -- 每0.5秒跳动一次由Hekili.Update频率保证（通常很高）
+            local timeFactor = math.max(0.1, math.min(1.0, remaining / 10))
+            
+            local targetUnit = self:GetBestTarget()
+            if targetUnit then
+                local missingHP = self:GetMissingHealth(targetUnit)
+                local sp = self:GetSpellPower()
+                local baseCoeff = HekiliHelper.DB.profile.healingPriest.effectiveCoefficient or 0.8
+                local dynamicCoeff = baseCoeff * timeFactor
+                
+                if missingHP >= (sp * dynamicCoeff) then
+                    return true, targetUnit
+                end
+            end
         end
     end
     return false
@@ -160,7 +228,12 @@ function Module:CheckPOM()
     if not self:IsSpellReady(48113) then return false end
     local targetUnit = self:GetBestTarget()
     if not targetUnit then return false end
-    if self:GetHealthPct(targetUnit) <= (HekiliHelper.DB.profile.healingPriest.pomThreshold or 99) then
+    
+    local missingHP = self:GetMissingHealth(targetUnit)
+    local sp = self:GetSpellPower()
+    local coeff = HekiliHelper.DB.profile.healingPriest.effectiveCoefficient or 0.8
+    
+    if missingHP >= (sp * coeff) then
         return true, targetUnit
     end
     return false
@@ -170,7 +243,12 @@ function Module:CheckPenance()
     if not self:IsSpellReady(53007) then return false end
     local targetUnit = self:GetBestTarget()
     if not targetUnit then return false end
-    if self:GetHealthPct(targetUnit) <= (HekiliHelper.DB.profile.healingPriest.penanceThreshold or 80) then
+    
+    local missingHP = self:GetMissingHealth(targetUnit)
+    local sp = self:GetSpellPower()
+    local coeff = HekiliHelper.DB.profile.healingPriest.effectiveCoefficient or 0.8
+    
+    if missingHP >= (sp * coeff) then
         return true, targetUnit
     end
     return false
@@ -179,8 +257,21 @@ end
 function Module:CheckRenew()
     local targetUnit = self:GetBestTarget()
     if not targetUnit then return false end
-    if not self:HasBuff(targetUnit, 48068) then
-        if self:GetHealthPct(targetUnit) <= (HekiliHelper.DB.profile.healingPriest.renewThreshold or 90) then
+    
+    local renewName = GetSpellInfo(139) -- Rank 1 ID to get name
+    local hasRenew = false
+    if renewName and self:HasBuffByName(targetUnit, renewName) then
+        hasRenew = true
+    elseif self:HasBuff(targetUnit, 48068) then
+        hasRenew = true
+    end
+    
+    if not hasRenew then
+        local missingHP = self:GetMissingHealth(targetUnit)
+        local sp = self:GetSpellPower()
+        local coeff = HekiliHelper.DB.profile.healingPriest.effectiveCoefficient or 0.8
+        
+        if missingHP >= (sp * coeff) then
             return true, targetUnit
         end
     end
@@ -190,7 +281,12 @@ end
 function Module:CheckFlashHeal()
     local targetUnit = self:GetBestTarget()
     if not targetUnit then return false end
-    if self:GetHealthPct(targetUnit) <= (HekiliHelper.DB.profile.healingPriest.flashHealThreshold or 70) then
+    
+    local missingHP = self:GetMissingHealth(targetUnit)
+    local sp = self:GetSpellPower()
+    local coeff = HekiliHelper.DB.profile.healingPriest.effectiveCoefficient or 0.8
+    
+    if missingHP >= (sp * coeff) then
         return true, targetUnit
     end
     return false
@@ -199,7 +295,13 @@ end
 function Module:CheckGreaterHeal()
     local targetUnit = self:GetBestTarget()
     if not targetUnit then return false end
-    if self:GetHealthPct(targetUnit) <= (HekiliHelper.DB.profile.healingPriest.greaterHealThreshold or 40) then
+    
+    local missingHP = self:GetMissingHealth(targetUnit)
+    local sp = self:GetSpellPower()
+    local coeff = HekiliHelper.DB.profile.healingPriest.effectiveCoefficient or 0.8
+    
+    -- 强效治疗术通常需要更大的缺口，这里可以根据业务需求调整或者保持统一系数
+    if missingHP >= (sp * coeff * 1.5) then -- 假设强效治疗需要1.5倍的缺口
         return true, targetUnit
     end
     return false
@@ -208,24 +310,74 @@ end
 function Module:CheckCircleOfHealing()
     if not self:IsSpellReady(48089) then return false end
     local count = 0
-    local threshold = HekiliHelper.DB.profile.healingPriest.cohThreshold or 85
+    local sp = self:GetSpellPower()
+    local coeff = HekiliHelper.DB.profile.healingPriest.effectiveCoefficient or 0.8
+    local threshold = sp * coeff
+    
     local units = IsInRaid() and 40 or (IsInGroup() and 5 or 1)
     
     for i = 1, units do
         local u = (units == 1) and "player" or (IsInRaid() and "raid"..i or (i==5 and "player" or "party"..i))
-        if self:IsFriendlyTarget(u) and self:GetHealthPct(u) <= threshold then
+        if self:IsFriendlyTarget(u) and self:GetMissingHealth(u) >= threshold then
             count = count + 1
         end
     end
-    return count >= 3, "mouseover"
+    
+    if count >= 3 then
+        local targetUnit = self:GetBestTarget()
+        return targetUnit ~= nil, targetUnit
+    end
+    return false
 end
 
 -- ============================================
 -- 工具函数
 -- ============================================
 
+function Module:GetSpellPower()
+    -- 获取治疗强度 (Spell Bonus Healing)
+    return GetSpellBonusHealing() or 0
+end
+
+function Module:GetMissingHealth(unit)
+    if not unit or not UnitExists(unit) then return 0 end
+    return UnitHealthMax(unit) - UnitHealth(unit)
+end
+
+function Module:GetBuffExpirationTime(unit, spellID)
+    for i = 1, 40 do
+        local _, _, _, _, _, expirationTime, _, _, _, sID = UnitBuff(unit, i)
+        if not _ then break end
+        if sID == spellID then return expirationTime end
+    end
+    return nil
+end
+
+function Module:GetBuffExpirationTimeByName(unit, name)
+    if not name then return nil end
+    for i = 1, 40 do
+        local bName, _, _, _, _, expirationTime = UnitBuff(unit, i)
+        if not bName then break end
+        if bName == name then return expirationTime end
+    end
+    return nil
+end
+
 function Module:IsFriendlyTarget(unit)
-    return unit and UnitExists(unit) and UnitIsFriend("player", unit) and not UnitIsDead(unit) and UnitIsVisible(unit)
+    if not (unit and UnitExists(unit) and UnitIsFriend("player", unit) and not UnitIsDead(unit) and UnitIsVisible(unit)) then
+        return false
+    end
+    
+    -- 检查距离（40码范围内）
+    local RC = LibStub and LibStub("LibRangeCheck-2.0")
+    if RC then
+        local minRange, maxRange = RC:GetRange(unit)
+        if maxRange and maxRange > 40 then
+            return false
+        end
+    end
+    
+    return true
 end
 
 function Module:GetHealthPct(unit)
@@ -261,6 +413,16 @@ function Module:HasDebuff(unit, spellID)
     return false
 end
 
+function Module:HasDebuffByName(unit, name)
+    if not name then return false end
+    for i = 1, 40 do
+        local bName = UnitDebuff(unit, i)
+        if not bName then break end
+        if bName == name then return true end
+    end
+    return false
+end
+
 function Module:IsSpellReady(spellID)
     local s, d = GetSpellCooldown(spellID)
     return (not s or s == 0 or (s + d - GetTime() <= 0))
@@ -270,7 +432,16 @@ function Module:GetBestTarget()
     if self:IsFriendlyTarget("mouseover") then return "mouseover" end
     if self:IsFriendlyTarget("target") then return "target" end
     if self:IsFriendlyTarget("focus") then return "focus" end
+    if self:IsFriendlyTarget("player") then return "player" end
     return nil
+end
+
+function Module:IsLearned(name, id)
+    -- 首先尝试通过 ID 检查（适用于天赋技能或无等级技能）
+    if IsSpellKnown(id) then return true end
+    -- 尝试通过名称检查（适用于有多个等级的技能，只要学习了任意等级，GetSpellInfo(name) 就会返回有效值）
+    local spellName = GetSpellInfo(name)
+    return spellName ~= nil
 end
 
 -- ============================================
@@ -294,8 +465,8 @@ function Module:InsertHealingSkills()
             
             local skillsFound = 0
             for _, skillDef in ipairs(self.SkillDefinitions) do
-                -- 必须已学习
-                if GetSpellInfo(skillDef.spellID) then
+                -- 使用增强的已学习检测，支持多等级技能
+                if self:IsLearned(skillDef.displayName, skillDef.spellID) then
                     local shouldInsert, targetUnit = skillDef.checkFunc(self)
                     if shouldInsert and skillsFound < 4 then
                         skillsFound = skillsFound + 1

@@ -499,7 +499,9 @@ function HekiliHelper:PrintRecommendationQueue()
                     if queue[i].isMeleeIndicator then
                         name = name .. "(近战)"
                     elseif queue[i].isHealingShamanSkill then
-                        name = name .. "(治疗)"
+                        name = name .. "(萨满)"
+                    elseif queue[i].isHealingPriestSkill then
+                        name = name .. "(牧师)"
                     end
                     
                     table.insert(actions, string.format("[%d]%s", i, name))

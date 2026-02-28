@@ -301,6 +301,33 @@ function Module:InsertMeleeIndicator()
         self:RemoveMeleeIndicator()
         return
     end
+
+    -- 默认不对远程职业开启
+    -- 如果是远程职业且没有在配置中明确强制开启（目前配置只有全局开关），则跳过
+    local class = UnitClassBase("player")
+    local isRanged = (class == "HUNTER" or class == "MAGE" or class == "WARLOCK" or class == "PRIEST")
+    
+    -- 德鲁伊和萨满比较特殊，检查当前天赋/姿态
+    if class == "DRUID" then
+        -- 检查姿态：只有在猎豹或熊形态下才认为是近战
+        local form = GetShapeshiftForm()
+        if form ~= 1 and form ~= 3 then -- 1: 熊, 3: 猎豹
+            isRanged = true
+        end
+    elseif class == "SHAMAN" then
+        -- 萨满检查：如果是元素或恢复，视为远程
+        -- 在怀旧服中通过检查天赋点数来简单判断
+        local _, _, _, _, points1 = GetTalentTabInfo(1) -- 元素
+        local _, _, _, _, points3 = GetTalentTabInfo(3) -- 恢复
+        if (points1 and points1 > 20) or (points3 and points3 > 20) then
+            isRanged = true
+        end
+    end
+
+    if isRanged then
+        self:RemoveMeleeIndicator()
+        return
+    end
     
     -- 使用Hekili.DisplayPool访问displays对象（这是ns.UI.Displays的别名）
     local displays = Hekili.DisplayPool

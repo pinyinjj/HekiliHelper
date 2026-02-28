@@ -247,18 +247,7 @@ function Module:CheckChainHeal()
     end
     
     -- 检查鼠标悬停目标或当前选中目标
-    local targetUnit = nil
-    
-    -- 优先检查鼠标悬停目标
-    if self:IsValidHealingTarget("mouseover") then
-        targetUnit = "mouseover"
-    -- 其次检查当前选中目标
-    elseif self:IsValidHealingTarget("target") then
-        targetUnit = "target"
-    -- 兜底：检查焦点目标
-    elseif self:IsValidHealingTarget("focus") then
-        targetUnit = "focus"
-    end
+    local targetUnit = self:GetBestTarget()
     
     -- 如果没有有效的目标，返回false
     if not targetUnit then
@@ -535,18 +524,7 @@ function Module:CheckHealingWave()
     end
 
     -- 检查鼠标悬停目标或当前选中目标
-    local targetUnit = nil
-    
-    -- 优先检查鼠标悬停目标
-    if self:IsValidHealingTarget("mouseover") then
-        targetUnit = "mouseover"
-    -- 其次检查当前选中目标
-    elseif self:IsValidHealingTarget("target") then
-        targetUnit = "target"
-    -- 兜底：检查焦点目标
-    elseif self:IsValidHealingTarget("focus") then
-        targetUnit = "focus"
-    end
+    local targetUnit = self:GetBestTarget()
     
     -- 如果没有有效的目标，返回false
     if not targetUnit then
@@ -579,18 +557,7 @@ function Module:CheckLesserHealingWave()
     end
 
     -- 检查鼠标悬停目标或当前选中目标
-    local targetUnit = nil
-    
-    -- 优先检查鼠标悬停目标
-    if self:IsValidHealingTarget("mouseover") then
-        targetUnit = "mouseover"
-    -- 其次检查当前选中目标
-    elseif self:IsValidHealingTarget("target") then
-        targetUnit = "target"
-    -- 兜底：检查焦点目标
-    elseif self:IsValidHealingTarget("focus") then
-        targetUnit = "focus"
-    end
+    local targetUnit = self:GetBestTarget()
     
     -- 如果没有有效的目标，返回false
     if not targetUnit then
@@ -691,18 +658,7 @@ function Module:CheckRiptide()
     end
 
     -- 检查鼠标悬停目标或当前选中目标
-    local targetUnit = nil
-    
-    -- 优先检查鼠标悬停目标
-    if self:IsValidHealingTarget("mouseover") then
-        targetUnit = "mouseover"
-    -- 其次检查当前选中目标
-    elseif self:IsValidHealingTarget("target") then
-        targetUnit = "target"
-    -- 兜底：检查焦点目标
-    elseif self:IsValidHealingTarget("focus") then
-        targetUnit = "focus"
-    end
+    local targetUnit = self:GetBestTarget()
     
     -- 如果没有有效的目标，返回false
     if not targetUnit then
@@ -759,25 +715,21 @@ function Module:CheckEarthShield()
         return false, nil
     end
 
-    -- 只有当存在焦点目标时才推荐使用大地之盾
-    if not UnitExists("focus") then
+    -- 检查最佳目标（鼠标指向 > 当前目标 > 焦点 > 自身）
+    local targetUnit = self:GetBestTarget()
+    
+    -- 如果没有有效目标，返回false
+    if not targetUnit then
         return false, nil
     end
     
-    -- 检查焦点目标是否是有效的治疗目标（友方、存活、在视野范围内）
-    if not self:IsValidHealingTarget("focus") then
+    -- 检查目标是否已有大地之盾buff (使用已经定义的 HasEarthShield 工具函数更准确)
+    if self:HasEarthShield(targetUnit) then
         return false, nil
     end
-    
-    -- 检查焦点目标是否有大地之盾buff
-    local hasEarthShield = self:HasBuff("focus", "大地之盾") or self:HasBuff("focus", "Earth Shield")
     
     -- 如果没有大地之盾，返回true
-    if not hasEarthShield then
-        return true, "focus"
-    end
-    
-    return false, nil
+    return true, targetUnit
 end
 
 -- 法力之潮图腾判断
@@ -1250,6 +1202,15 @@ function Module:IsSpellReady(spellID)
     return remaining <= 0
 end
 
+-- 获取最佳目标（鼠标指向 > 当前目标 > 焦点 > 自身）
+function Module:GetBestTarget()
+    if self:IsValidHealingTarget("mouseover") then return "mouseover" end
+    if self:IsValidHealingTarget("target") then return "target" end
+    if self:IsValidHealingTarget("focus") then return "focus" end
+    if self:IsValidHealingTarget("player") then return "player" end
+    return nil
+end
+
 -- 从Hekili获取技能信息
 function Module:GetSkillFromHekili(actionName)
     if not Hekili or not Hekili.Class or not Hekili.Class.abilities then
@@ -1257,6 +1218,15 @@ function Module:GetSkillFromHekili(actionName)
     end
     
     return Hekili.Class.abilities[actionName]
+end
+
+-- 检查角色是否学习了该技能（支持多等级）
+function Module:IsLearned(name, id)
+    -- 首先尝试通过 ID 检查（适用于天赋技能或无等级技能）
+    if IsSpellKnown(id) then return true end
+    -- 尝试通过名称检查（适用于有多个等级的技能，只要学习了任意等级，GetSpellInfo(name) 就会返回有效值）
+    local spellName = GetSpellInfo(name)
+    return spellName ~= nil
 end
 
 -- ============================================
@@ -1324,8 +1294,8 @@ function Module:InsertSkillForDisplay(dispName, UI)
     local skillsToInsert = {}
     local skillsToInsertMap = {}  -- 用于快速查找
     for _, skillDef in ipairs(self.SkillDefinitions) do
-        -- 基础判断：必须已学习该技能
-        if IsSpellKnown(skillDef.spellID) then
+        -- 基础判断：必须已学习该技能（使用增强的检测逻辑，支持多等级）
+        if self:IsLearned(skillDef.displayName, skillDef.spellID) then
             local shouldInsert, targetUnit = skillDef.checkFunc(self)
             
             if shouldInsert then
@@ -1452,12 +1422,7 @@ function Module:InsertSkillForDisplay(dispName, UI)
     -- 第五步：兜底逻辑 - 如果没有任何技能满足条件，但目标受伤，使用次级治疗波作为兜底
     if #skillsToInsert == 0 then
         -- 检查是否有受伤的友方目标
-        local targetUnit = nil
-        if self:IsValidHealingTarget("mouseover") then
-            targetUnit = "mouseover"
-        elseif self:IsValidHealingTarget("target") then
-            targetUnit = "target"
-        end
+        local targetUnit = self:GetBestTarget()
         
         -- 如果目标存在且受伤，使用次级治疗波作为兜底
         if targetUnit then
