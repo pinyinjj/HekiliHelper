@@ -90,30 +90,34 @@ function Module:ProcessDisplay(dispName, UI)
     
     local Queue = UI.Recommendations
     local hasRecommendation = false
-    local blankSlotIndex = nil
+    local blankIconsFound = {}
     
-    -- 检查队列
-    for i = 1, 4 do
-        if Queue[i] and Queue[i].actionName and Queue[i].actionName ~= "" then
+    -- 1. 扫描整个队列（检查前10个槽位，确保覆盖全面）
+    for i = 1, 10 do
+        if Queue[i] then
             if Queue[i].isBlankIcon then
-                blankSlotIndex = i
-            else
+                table.insert(blankIconsFound, i)
+            elseif Queue[i].actionName and Queue[i].actionName ~= "" and Queue[i].actionName ~= "blank_icon" then
                 hasRecommendation = true
-                break
             end
         end
     end
     
-    -- 逻辑处理
+    -- 2. 逻辑处理
     if hasRecommendation then
-        if blankSlotIndex then
-            Queue[blankSlotIndex] = nil
+        -- 如果有真实推荐，移除所有发现的空白图标
+        if #blankIconsFound > 0 then
+            for _, index in ipairs(blankIconsFound) do
+                Queue[index] = nil
+                HekiliHelper:DebugPrint(string.format("|cFF00FFFF[BlankIcon]|r 发现真实推荐，移除 %s 位置 %d 的空白图标", dispName, index))
+            end
             UI.NewRecommendations = true
         end
     else
-        -- 没有真实推荐
-        if not blankSlotIndex then
-            -- HekiliHelper:DebugPrint(string.format("|cFF00FFFF[BlankIcon]|r 插入空白图标到 %s", dispName))
+        -- 没有任何真实推荐
+        -- 如果队列中还没有空白图标，则在位置1插入一个
+        if #blankIconsFound == 0 then
+            -- HekiliHelper:DebugPrint(string.format("|cFF00FFFF[BlankIcon]|r 队列为空，插入空白图标到 %s", dispName))
             
             -- 确保位置1被占用
             Queue[1] = Queue[1] or {}
