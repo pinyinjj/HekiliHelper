@@ -542,6 +542,59 @@ function Module:GetOptions()
                 }
             },
             
+            deathKnight = {
+                type = "group",
+                name = "死亡骑士",
+                order = 3.3,
+                args = {
+                    header = {
+                        type = "header",
+                        name = "死亡骑士设置",
+                        order = 1,
+                        width = "full"
+                    },
+                    
+                    desc = {
+                        type = "description",
+                        name = "为死亡骑士提供智能技能推荐。\n\n" ..
+                               "|cFF00FF00传染 (Pestilence) 触发逻辑:|r\n" ..
+                               "1. |cFFFFD700群体感染|r：装备|cFF00FFFF传染雕文|r，15码内超过2个目标无疾病，且符文就绪。\n" ..
+                               "2. |cFFFFD700刷新疾病|r：装备|cFF00FFFF疾病雕文|r，当前目标疾病时间 < 3秒，且符文就绪。",
+                        fontSize = "medium",
+                        order = 2,
+                        width = "full"
+                    },
+                    
+                    enabled = {
+                        type = "toggle",
+                        name = "启用",
+                        desc = "启用或禁用死亡骑士技能推荐功能。",
+                        order = 10,
+                        width = "full",
+                        get = function()
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return true
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.deathKnight then
+                                db.deathKnight = { enabled = true }
+                            end
+                            return db.deathKnight.enabled ~= false
+                        end,
+                        set = function(info, val)
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.deathKnight then
+                                db.deathKnight = {}
+                            end
+                            db.deathKnight.enabled = val
+                        end
+                    },
+                }
+            },
+            
             about = {
                 type = "group",
                 name = "关于",

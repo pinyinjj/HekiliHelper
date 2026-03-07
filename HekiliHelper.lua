@@ -209,6 +209,9 @@ end
 function HekiliHelper:OnInitialize()
     self:Print("|cFF00FF00[HekiliHelper]|r 插件已加载，版本 " .. self.Version)
     
+    -- 获取玩家职业
+    local _, playerClass = UnitClass("player")
+    
     -- 初始化数据库
     local defaults = {
         profile = {
@@ -235,6 +238,9 @@ function HekiliHelper:OnInitialize()
                 flashHealThreshold = 70,
                 greaterHealThreshold = 40,
                 cohThreshold = 85,
+            },
+            deathKnight = {
+                enabled = (playerClass == "DEATHKNIGHT"),
             },
         }
     }
@@ -282,6 +288,13 @@ function HekiliHelper:OnInitialize()
         self:DebugPrint("|cFF00FF00[HekiliHelper]|r 创建HealingPriestSkills模块对象")
     else
         self:DebugPrint("|cFF00FF00[HekiliHelper]|r HealingPriestSkills模块对象已存在")
+    end
+
+    if not self.DeathKnightSkills then
+        self.DeathKnightSkills = {}
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r 创建DeathKnightSkills模块对象")
+    else
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r DeathKnightSkills模块对象已存在")
     end
     
     if not self.BlankIcon then
@@ -438,6 +451,18 @@ function HekiliHelper:InitializeModules()
             end
         else
             self:DebugPrint("|cFFFF0000[HekiliHelper]|r 警告: HealingPriestSkills模块未找到（可能未加载）")
+        end
+
+        if self.DeathKnightSkills then
+            self:DebugPrint("|cFF00FF00[HekiliHelper]|r 找到DeathKnightSkills模块，开始初始化...")
+            local success = self.DeathKnightSkills:Initialize()
+            if success then
+                self:DebugPrint("|cFF00FF00[HekiliHelper]|r DeathKnightSkills模块初始化成功")
+            else
+                self:Print("|cFFFF0000[HekiliHelper]|r DeathKnightSkills模块初始化失败")
+            end
+        else
+            self:DebugPrint("|cFFFF0000[HekiliHelper]|r 警告: DeathKnightSkills模块未找到（可能未加载）")
         end
         
             if self.BlankIcon then

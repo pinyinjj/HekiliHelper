@@ -28,16 +28,16 @@ local Module = HekiliHelper.MeleeTargetIndicator
 -- 模块初始化
 function Module:Initialize()
     if not Hekili then
-        HekiliHelper:Print("|cFFFF0000[MeleeIndicator]|r 错误: Hekili对象不存在")
+        -- HekiliHelper:Print("|cFFFF0000[MeleeIndicator]|r 错误: Hekili对象不存在")
         return false
     end
     
     if not Hekili.Update then
-        HekiliHelper:Print("|cFFFF0000[MeleeIndicator]|r 错误: Hekili.Update函数不存在")
+        -- HekiliHelper:Print("|cFFFF0000[MeleeIndicator]|r 错误: Hekili.Update函数不存在")
         return false
     end
     
-    HekiliHelper:DebugPrint("|cFF00FF00[MeleeIndicator]|r 开始Hook Hekili.Update...")
+    -- HekiliHelper:DebugPrint("|cFF00FF00[MeleeIndicator]|r 开始Hook Hekili.Update...")
     
     -- Hook Hekili.Update函数
     local success = HekiliHelper.HookUtils.Wrap(Hekili, "Update", function(oldFunc, self, ...)
@@ -54,10 +54,10 @@ function Module:Initialize()
     end)
     
     if success then
-        HekiliHelper:DebugPrint("|cFF00FF00[MeleeIndicator]|r 模块已初始化，Hook成功")
+        -- HekiliHelper:DebugPrint("|cFF00FF00[MeleeIndicator]|r 模块已初始化，Hook成功")
         return true
     else
-        HekiliHelper:Print("|cFFFF0000[MeleeIndicator]|r Hook失败")
+        -- HekiliHelper:Print("|cFFFF0000[MeleeIndicator]|r Hook失败")
         return false
     end
 end
@@ -242,7 +242,7 @@ function Module:ShouldShowMeleeIndicator()
     local meleeRangeEnemyCount = self:CountEnemiesInMeleeRange()
     
     if meleeRangeEnemyCount == 0 then
-        self:PrintStatus("敌人检查", false)
+        -- self:PrintStatus("敌人检查", false)
         return false
     end
     
@@ -362,7 +362,7 @@ function Module:InsertMeleeIndicator()
     end
     
     if processedCount > 0 then
-        HekiliHelper:DebugPrint(string.format("|cFF00FFFF[MeleeIndicator]|r 处理了 %d 个激活的显示", processedCount))
+        -- HekiliHelper:DebugPrint(string.format("|cFF00FFFF[MeleeIndicator]|r 处理了 %d 个激活的显示", processedCount))
     end
 end
 
@@ -383,7 +383,7 @@ function Module:InsertIndicatorForDisplay(dispName, UI)
     local shouldShow = self:ShouldShowMeleeIndicator()
     
     -- 调试信息
-    HekiliHelper:DebugPrint(string.format("|cFF00FFFF[MeleeIndicator]|r 检查显示: %s, 应该显示: %s", dispName, shouldShow and "是" or "否"))
+    -- HekiliHelper:DebugPrint(string.format("|cFF00FFFF[MeleeIndicator]|r 检查显示: %s, 应该显示: %s", dispName, shouldShow and "是" or "否"))
     
     -- 检查队列中是否已经有指示器（参考Hekili - Copy的实现）
     local alreadyHasIcon = false
