@@ -218,8 +218,11 @@ function HekiliHelper:OnInitialize()
             enabled = true,
             debugEnabled = false,
             meleeIndicator = {
-                enabled = true,
+                enabled = false,
                 checkRange = 5,
+            },
+            ttd = {
+                enabled = true,
             },
             healingShaman = {
                 enabled = true,
@@ -274,6 +277,13 @@ function HekiliHelper:OnInitialize()
         self:DebugPrint("|cFF00FF00[HekiliHelper]|r 创建MeleeTargetIndicator模块对象")
     else
         self:DebugPrint("|cFF00FF00[HekiliHelper]|r MeleeTargetIndicator模块对象已存在")
+    end
+    
+    if not self.TTD then
+        self.TTD = {}
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r 创建TTD模块对象")
+    else
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r TTD模块对象已存在")
     end
     
     if not self.HealingShamanSkills then
@@ -399,93 +409,45 @@ end
 function HekiliHelper:InitializeModules()
     if not CheckHekiliLoaded() then
         self:Print("|cFFFF0000[HekiliHelper]|r 错误: Hekili未加载，无法初始化模块")
-        -- 再次尝试延迟初始化
-        C_Timer.After(2.0, function()
-            if CheckHekiliLoaded() then
-                self:InitializeModules()
-            else
-                self:Print("|cFFFF0000[HekiliHelper]|r 错误: 延迟初始化失败，Hekili仍未加载")
-            end
-        end)
         return
     end
     
-    self:DebugPrint("|cFF00FF00[HekiliHelper]|r 正在初始化模块...")
-    self:DebugPrint("|cFF00FF00[HekiliHelper]|r Hekili.Update存在: " .. (Hekili.Update and "是" or "否"))
+    self:DebugPrint("|cFF00FF00[HekiliHelper]|r 正在开始初始化各功能模块...")
     
     -- 集成选项到Hekili
     self:IntegrateOptions()
     
-    -- 检查模块是否存在并初始化
-    if self.MeleeTargetIndicator then
-        self:DebugPrint("|cFF00FF00[HekiliHelper]|r 找到MeleeTargetIndicator模块，开始初始化...")
-        local success = self.MeleeTargetIndicator:Initialize()
-        if success then
-            self:DebugPrint("|cFF00FF00[HekiliHelper]|r MeleeTargetIndicator模块初始化成功")
-        else
-            self:Print("|cFFFF0000[HekiliHelper]|r MeleeTargetIndicator模块初始化失败")
-        end
-    else
-        self:Print("|cFFFF0000[HekiliHelper]|r 错误: MeleeTargetIndicator模块未找到")
-    end
-    
-        if self.HealingShamanSkills then
-            self:DebugPrint("|cFF00FF00[HekiliHelper]|r 找到HealingShamanSkills模块，开始初始化...")
-            local success = self.HealingShamanSkills:Initialize()
-            if success then
-                self:DebugPrint("|cFF00FF00[HekiliHelper]|r HealingShamanSkills模块初始化成功")
-            else
-                self:Print("|cFFFF0000[HekiliHelper]|r HealingShamanSkills模块初始化失败")
-            end
-        else
-            self:DebugPrint("|cFFFF0000[HekiliHelper]|r 警告: HealingShamanSkills模块未找到（可能未加载）")
-        end
-    
-        if self.HealingPriestSkills then
-            self:DebugPrint("|cFF00FF00[HekiliHelper]|r 找到HealingPriestSkills模块，开始初始化...")
-            local success = self.HealingPriestSkills:Initialize()
-            if success then
-                self:DebugPrint("|cFF00FF00[HekiliHelper]|r HealingPriestSkills模块初始化成功")
-            else
-                self:Print("|cFFFF0000[HekiliHelper]|r HealingPriestSkills模块初始化失败")
-            end
-        else
-            self:DebugPrint("|cFFFF0000[HekiliHelper]|r 警告: HealingPriestSkills模块未找到（可能未加载）")
-        end
+    -- 模块列表
+    local modules = {
+        { name = "TTD", ref = self.TTD },
+        { name = "MeleeTargetIndicator", ref = self.MeleeTargetIndicator },
+        { name = "HealingShamanSkills", ref = self.HealingShamanSkills },
+        { name = "HealingPriestSkills", ref = self.HealingPriestSkills },
+        { name = "DeathKnightSkills", ref = self.DeathKnightSkills },
+        { name = "BlankIcon", ref = self.BlankIcon },
+        { name = "UIModifier", ref = self.UIModifier }
+    }
 
-        if self.DeathKnightSkills then
-            self:DebugPrint("|cFF00FF00[HekiliHelper]|r 找到DeathKnightSkills模块，开始初始化...")
-            local success = self.DeathKnightSkills:Initialize()
-            if success then
-                self:DebugPrint("|cFF00FF00[HekiliHelper]|r DeathKnightSkills模块初始化成功")
-            else
-                self:Print("|cFFFF0000[HekiliHelper]|r DeathKnightSkills模块初始化失败")
-            end
-        else
-            self:DebugPrint("|cFFFF0000[HekiliHelper]|r 警告: DeathKnightSkills模块未找到（可能未加载）")
-        end
-        
-            if self.BlankIcon then
-                self:DebugPrint("|cFF00FF00[HekiliHelper]|r 找到BlankIcon模块，开始初始化...")
-                local success = self.BlankIcon:Initialize()
-                if success then
-                    self:DebugPrint("|cFF00FF00[HekiliHelper]|r BlankIcon模块初始化成功")
-                else
-                    self:Print("|cFFFF0000[HekiliHelper]|r BlankIcon模块初始化失败")
+    for _, mod in ipairs(modules) do
+        if mod.ref then
+            self:DebugPrint(string.format("|cFF00FF00[HekiliHelper]|r 正在初始化模块: %s", mod.name))
+            local success, err = pcall(function()
+                if mod.ref.Initialize then
+                    mod.ref:Initialize()
                 end
-            else
-                self:DebugPrint("|cFFFF0000[HekiliHelper]|r 警告: BlankIcon模块未找到（可能未加载）")
-            end
-        
-            if self.UIModifier then
-                self:DebugPrint("|cFF00FF00[HekiliHelper]|r 找到UIModifier模块，开始初始化...")
-                self.UIModifier:Initialize()
-            end
+            end)
             
-            -- Hook Hekili.Update 来自动打印队列（仅在调试模式开启时）
+            if success then
+                self:DebugPrint(string.format("|cFF00FF00[HekiliHelper]|r 模块 %s 初始化完成", mod.name))
+            else
+                self:Print(string.format("|cFFFF0000[HekiliHelper]|r 模块 %s 初始化失败: %s", mod.name, err or "未知错误"))
+            end
+        end
+    end
+            
+    -- Hook Hekili.Update 来自动打印队列（仅在调试模式开启时）
     HekiliHelper.HookUtils.Hook(Hekili, "Update", function()
         if self.DebugEnabled then
-            -- 延迟执行，确保其他模块已经完成了它们的插入
             C_Timer.After(0.02, function()
                 self:PrintRecommendationQueue()
             end)

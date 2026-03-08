@@ -217,6 +217,48 @@ function Module:GetOptions()
                 }
             },
             
+            ttd = {
+                type = "group",
+                name = "TTD 计算器",
+                order = 2.5,
+                args = {
+                    header = {
+                        type = "header",
+                        name = "TTD (Time To Die) 设置",
+                        order = 1,
+                        width = "full"
+                    },
+                    
+                    desc = {
+                        type = "description",
+                        name = "实时计算当前目标的预计死亡时间。该数据可被其他模块用于逻辑判断（例如：如果目标即将死亡，则不推荐施放长周期的持续伤害技能）。",
+                        fontSize = "medium",
+                        order = 2,
+                        width = "full"
+                    },
+                    
+                    enabled = {
+                        type = "toggle",
+                        name = "启用 TTD 计算",
+                        desc = "启用或禁用 TTD 计算模块。",
+                        order = 10,
+                        width = "full",
+                        get = function()
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return true
+                            end
+                            return HekiliHelper.DB.profile.ttd.enabled ~= false
+                        end,
+                        set = function(info, val)
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return
+                            end
+                            HekiliHelper.DB.profile.ttd.enabled = val
+                        end
+                    },
+                }
+            },
+            
             healingShaman = {
                 type = "group",
                 name = "治疗萨满",

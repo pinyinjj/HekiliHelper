@@ -217,15 +217,18 @@ function Module:IsRealEnemy(unit)
     return true
 end
 
--- 统计范围内没有疾病的目标
-function Module:CountEnemiesWithoutDiseasesInRange(range)
+-- 统计范围内没有疾病的目标，并检查其 TTD
+function Module:GetPestilenceTargetInfo(range)
     local RC = LibStub("LibRangeCheck-2.0")
-    if not RC then return 0 end
+    local TTD = HekiliHelper.TTD
+    if not RC or not TTD then return 0, 0, false end
     
-    local count = 0
+    local noDiseaseCount = 0
+    local othersWithHighTTDCount = 0
+    local anyOtherHighTTD = false
     local checkedGUIDs = {}
-    local foundInfo = {} -- 用于调试
     
+    local targetGUID = UnitGUID("target")
     local unitsToCheck = {"target", "focus"}
     for i = 1, 5 do table.insert(unitsToCheck, "boss"..i) end
     
@@ -247,23 +250,25 @@ function Module:CountEnemiesWithoutDiseasesInRange(range)
                 local _, maxRange = RC:GetRange(unit)
                 
                 if maxRange and maxRange <= range then
-                    local name = UnitName(unit)
+                    local ttd = TTD:GetTTD(unit) or 99 -- 无法计算时默认为长寿命
                     local hasDiseases = self:UnitHasMyDiseases(unit)
-                    table.insert(foundInfo, string.format("%s(%d码, %s)", name, maxRange, hasDiseases and "|cFFFF0000有病|r" or "|cFF00FF00无病|r"))
+                    
+                    if guid ~= targetGUID then
+                        if ttd > 4.5 then
+                            anyOtherHighTTD = true
+                            othersWithHighTTDCount = othersWithHighTTDCount + 1
+                        end
+                    end
                     
                     if not hasDiseases then
-                        count = count + 1
+                        noDiseaseCount = noDiseaseCount + 1
                     end
                 end
             end
         end
     end
     
-    -- if #foundInfo > 0 then
-    --     HekiliHelper:DebugPrint(string.format("|cFF00FF00[DK扫描]|r 15码内发现%d个目标: %s", #foundInfo, table.concat(foundInfo, ", ")))
-    -- end
-    
-    return count
+    return noDiseaseCount, othersWithHighTTDCount, anyOtherHighTTD
 end
 
 -- 判断逻辑核心
@@ -273,21 +278,23 @@ function Module:ShouldRecommendPestilence()
     if not db.deathKnight or not db.deathKnight.enabled then return false end
     
     local now = GetTime()
+    local TTD = HekiliHelper.TTD
     
     -- 1. 前置状态获取
     local isKnown = IsSpellKnown(PESTILENCE_SPELL_ID)
     local start, duration = GetSpellCooldown(PESTILENCE_SPELL_ID)
     local cdLeft = (start and start > 0) and (start + duration - now) or 0
-    local hasPesGlyph, hasDisGlyph, foundGlyphs = self:CheckAllGlyphs()
-    local runeReady, runeCount = self:IsBloodOrDeathRuneReady()
+    local hasPesGlyph, hasDisGlyph, _ = self:CheckAllGlyphs()
+    local runeReady, _ = self:IsBloodOrDeathRuneReady()
     
     -- 2. 核心逻辑判断
     local decision = false
     local reason = ""
     
-    if isKnown and cdLeft <= 1.5 then
-        local enemiesWithout = self:CountEnemiesWithoutDiseasesInRange(15)
+    if isKnown and cdLeft <= 1.5 and runeReady then
+        local noDiseaseCount, othersHighTTDCount, anyOtherHighTTD = self:GetPestilenceTargetInfo(15)
         local hasFF, ffTime, hasBP, bpTime = self:GetTargetDiseaseStatus()
+        local targetTTD = TTD:GetTTD("target") or 99
         
         -- 计算当前刷新阈值
         local refreshThreshold = 3.0
@@ -295,18 +302,36 @@ function Module:ShouldRecommendPestilence()
             refreshThreshold = 5.5
         end
         
-        -- 核心修正：必须双病齐全
+        -- 核心逻辑：必须双病齐全
         if hasFF and hasBP then
-            -- 条件1：群体感染 (满足 1 个及以上额外无病目标就传染)
-            if hasPesGlyph and runeReady and enemiesWithout > 0 then
-                decision = true
-                reason = string.format("满足 目标双病且15码内无病目标:%d 条件，使用传染", enemiesWithout)
-            end
-            
-            -- 条件2：刷新疾病 (双病均<阈值)
-            if not decision and hasDisGlyph and runeReady and ffTime < refreshThreshold and bpTime < refreshThreshold then
-                decision = true
-                reason = string.format("满足 目标双病均小于%.1fs(FF:%.1fs, BP:%.1fs) 条件，刷新传染", refreshThreshold, ffTime, bpTime)
+            -- TTD 判断核心规则
+            if anyOtherHighTTD then
+                -- 规则 A: 15码内有长寿命目标 (TTD > 4.5s)
+                
+                -- 情况 1: 群体扩散 (传染雕文)
+                if hasPesGlyph and noDiseaseCount > 0 then
+                    decision = true
+                    reason = string.format("扩散: 15码内发现%d个高TTD目标且有%d个无病目标", othersHighTTDCount, noDiseaseCount)
+                end
+                
+                -- 情况 2: 单体刷新 (疾病雕文)
+                if not decision and hasDisGlyph and ffTime < refreshThreshold and bpTime < refreshThreshold then
+                    decision = true
+                    reason = string.format("刷新: 当前目标双病即将到期(FF:%.1fs, BP:%.1fs)", ffTime, bpTime)
+                end
+            else
+                -- 规则 B: 15码内所有其他目标 TTD 都很短 (< 4.5s)
+                -- 即使当前目标符合刷新条件，如果大家都要死了，也不推荐传染
+                if targetTTD > 4.5 then
+                    -- 仅在当前目标还能活很久，且没有其他目标可扩散时，考虑纯单体刷新
+                    if hasDisGlyph and ffTime < refreshThreshold and bpTime < refreshThreshold then
+                        decision = true
+                        reason = string.format("纯单体刷新: 仅当前目标高TTD(%.1fs)", targetTTD)
+                    end
+                else
+                    -- 当前目标和其他目标 TTD 都 < 4.5s -> 彻底放弃传染
+                    -- decision = false
+                end
             end
         end
     end

@@ -10,6 +10,7 @@
 
 HekiliHelper.lua
 Modules/Options.lua
+Modules\TTD.lua
 Modules\MeleeTargetIndicator.lua
 Modules\HealingShamanSkills.lua
 Modules\HealingPriestSkills.lua
