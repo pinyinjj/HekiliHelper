@@ -24,12 +24,50 @@ local Module = HekiliHelper.DeathKnightSkills
 local PESTILENCE_SPELL_ID = 50842
 local FROST_FEVER_ID = 55095
 local BLOOD_PLAGUE_ID = 55078
-local GLYPH_PESTILENCE_ID = 58620 -- 传染雕文：半径增加5码
-local GLYPH_DISEASE_ID = 43334   -- 疾病雕文：传染刷新目标疾病
+local ARMY_OF_THE_DEAD_ID = 42650
+-- 修正：使用用户实际装备的雕文ID
+local GLYPH_PESTILENCE_ID = 58647 -- 传染雕文效果ID
+local GLYPH_DISEASE_ID = 58680    -- 疾病雕文效果ID (用户提供的 63334 也是，我们在Check里同时支持)
 
 -- 用于防止闪烁的状态变量
 Module.LastRecommendationTime = 0
+Module.LastPrintTime = 0
+Module.LastReason = ""
 Module.RecommendationLinger = 0.2 -- 推荐图标最少停留0.2秒
+
+-- 辅助函数：判断是否为Boss
+function Module:IsBoss()
+    if not UnitExists("target") then return false end
+    local level = UnitLevel("target")
+    local classification = UnitClassification("target")
+    return level == -1 or classification == "worldboss" or classification == "elite"
+end
+
+-- 辅助函数：王者大军是否可用
+function Module:IsArmyReady()
+    if not IsSpellKnown(ARMY_OF_THE_DEAD_ID) then return false end
+    local start, duration = GetSpellCooldown(ARMY_OF_THE_DEAD_ID)
+    return (not start or start == 0 or duration <= 1.5)
+end
+
+-- 辅助函数：打印并检查雕文
+function Module:CheckAllGlyphs()
+    local currentSpec = (GetActiveTalentGroup and GetActiveTalentGroup()) or 1
+    local found = {}
+    local hasPes, hasDis = false, false
+    
+    for i = 1, 6 do
+        local enabled, _, _, glyphSpellID, _ = GetGlyphSocketInfo(i, currentSpec)
+        if enabled and glyphSpellID then
+            table.insert(found, glyphSpellID)
+            if glyphSpellID == GLYPH_PESTILENCE_ID then hasPes = true end
+            -- 疾病雕文支持两个可能的ID
+            if glyphSpellID == 58680 or glyphSpellID == 63334 then hasDis = true end
+        end
+    end
+    
+    return hasPes, hasDis, found
+end
 
 -- 模块初始化
 function Module:Initialize()
@@ -103,26 +141,14 @@ end
 
 -- 检查是否装备了传染雕文
 function Module:HasPestilenceGlyph()
-    local currentSpec = (GetActiveTalentGroup and GetActiveTalentGroup()) or 1
-    for i = 1, 6 do
-        local enabled, _, _, glyphSpell, _ = GetGlyphSocketInfo(i, currentSpec)
-        if enabled and glyphSpell == GLYPH_PESTILENCE_ID then
-            return true
-        end
-    end
-    return false
+    local hasPes, _, _ = self:CheckAllGlyphs()
+    return hasPes
 end
 
 -- 检查是否装备了疾病雕文
 function Module:HasDiseaseGlyph()
-    local currentSpec = (GetActiveTalentGroup and GetActiveTalentGroup()) or 1
-    for i = 1, 6 do
-        local enabled, _, _, glyphSpell, _ = GetGlyphSocketInfo(i, currentSpec)
-        if enabled and glyphSpell == GLYPH_DISEASE_ID then
-            return true
-        end
-    end
-    return false
+    local _, hasDis, _ = self:CheckAllGlyphs()
+    return hasDis
 end
 
 -- 检查当前目标是否患有疾病及其剩余时间
@@ -145,28 +171,20 @@ function Module:GetTargetDiseaseStatus()
         end
     end
     
-    local minTime = 0
-    if hasFF and hasBP then
-        minTime = math.min(ffTime, bpTime)
-    elseif hasFF then
-        minTime = ffTime
-    elseif hasBP then
-        minTime = bpTime
-    end
-    
-    return (hasFF or hasBP), minTime
+    return hasFF, ffTime, hasBP, bpTime
 end
 
 -- 检查是否有可用的鲜血符文或死亡符文
 function Module:IsBloodOrDeathRuneReady()
+    local readyCount = 0
     for i = 1, 6 do
         local start, duration, ready = GetRuneCooldown(i)
         local runeType = GetRuneType(i) -- 1: Blood, 2: Unholy, 3: Frost, 4: Death
         if ready and (runeType == 1 or runeType == 4) then
-            return true
+            readyCount = readyCount + 1
         end
     end
-    return false
+    return readyCount > 0, readyCount
 end
 
 -- 检查单位是否患有玩家施放的疾病
@@ -206,7 +224,7 @@ function Module:CountEnemiesWithoutDiseasesInRange(range)
     
     local count = 0
     local checkedGUIDs = {}
-    local foundInfo = {} -- 用于存储调试信息
+    local foundInfo = {} -- 用于调试
     
     local unitsToCheck = {"target", "focus"}
     for i = 1, 5 do table.insert(unitsToCheck, "boss"..i) end
@@ -228,14 +246,10 @@ function Module:CountEnemiesWithoutDiseasesInRange(range)
                 checkedGUIDs[guid] = true
                 local _, maxRange = RC:GetRange(unit)
                 
-                -- 只要在检测范围内，就收集信息进行打印
                 if maxRange and maxRange <= range then
-                    local hasDiseases = self:UnitHasMyDiseases(unit)
                     local name = UnitName(unit)
-                    
-                    -- 格式化信息：名称(距离, 状态)
-                    local statusStr = hasDiseases and "|cFFFF0000有病|r" or "|cFF00FF00无病|r"
-                    table.insert(foundInfo, string.format("%s(%d码, %s)", name, maxRange, statusStr))
+                    local hasDiseases = self:UnitHasMyDiseases(unit)
+                    table.insert(foundInfo, string.format("%s(%d码, %s)", name, maxRange, hasDiseases and "|cFFFF0000有病|r" or "|cFF00FF00无病|r"))
                     
                     if not hasDiseases then
                         count = count + 1
@@ -245,10 +259,9 @@ function Module:CountEnemiesWithoutDiseasesInRange(range)
         end
     end
     
-    -- 如果发现了任何目标，打印详细信息
-    if #foundInfo > 0 then
-        HekiliHelper:DebugPrint(string.format("|cFF00FF00[DK扫描]|r 15码内发现%d个敌对目标: %s", #foundInfo, table.concat(foundInfo, ", ")))
-    end
+    -- if #foundInfo > 0 then
+    --     HekiliHelper:DebugPrint(string.format("|cFF00FF00[DK扫描]|r 15码内发现%d个目标: %s", #foundInfo, table.concat(foundInfo, ", ")))
+    -- end
     
     return count
 end
@@ -259,34 +272,63 @@ function Module:ShouldRecommendPestilence()
     local db = HekiliHelper.DB.profile
     if not db.deathKnight or not db.deathKnight.enabled then return false end
     
-    -- 锁定逻辑：如果刚刚推荐过，在极短时间内强制返回true，防止闪烁
     local now = GetTime()
-    if now - self.LastRecommendationTime < self.RecommendationLinger then
-        return true
-    end
-
-    if not IsSpellKnown(PESTILENCE_SPELL_ID) then return false end
-    local start, duration = GetSpellCooldown(PESTILENCE_SPELL_ID)
-    if start and start > 0 and duration > 1.5 then return false end
-
-    local hasDiseases, minDuration = self:GetTargetDiseaseStatus()
-    if not hasDiseases then return false end
     
+    -- 1. 前置状态获取
+    local isKnown = IsSpellKnown(PESTILENCE_SPELL_ID)
+    local start, duration = GetSpellCooldown(PESTILENCE_SPELL_ID)
+    local cdLeft = (start and start > 0) and (start + duration - now) or 0
+    local hasPesGlyph, hasDisGlyph, foundGlyphs = self:CheckAllGlyphs()
+    local runeReady, runeCount = self:IsBloodOrDeathRuneReady()
+    
+    -- 2. 核心逻辑判断
     local decision = false
-    -- 条件1：群体感染
-    if self:HasPestilenceGlyph() and self:IsBloodOrDeathRuneReady() then
-        if self:CountEnemiesWithoutDiseasesInRange(15) > 2 then
-            decision = true
+    local reason = ""
+    
+    if isKnown and cdLeft <= 1.5 then
+        local enemiesWithout = self:CountEnemiesWithoutDiseasesInRange(15)
+        local hasFF, ffTime, hasBP, bpTime = self:GetTargetDiseaseStatus()
+        
+        -- 计算当前刷新阈值
+        local refreshThreshold = 3.0
+        if self:IsBoss() and self:IsArmyReady() then
+            refreshThreshold = 5.5
+        end
+        
+        -- 核心修正：必须双病齐全
+        if hasFF and hasBP then
+            -- 条件1：群体感染 (满足 1 个及以上额外无病目标就传染)
+            if hasPesGlyph and runeReady and enemiesWithout > 0 then
+                decision = true
+                reason = string.format("满足 目标双病且15码内无病目标:%d 条件，使用传染", enemiesWithout)
+            end
+            
+            -- 条件2：刷新疾病 (双病均<阈值)
+            if not decision and hasDisGlyph and runeReady and ffTime < refreshThreshold and bpTime < refreshThreshold then
+                decision = true
+                reason = string.format("满足 目标双病均小于%.1fs(FF:%.1fs, BP:%.1fs) 条件，刷新传染", refreshThreshold, ffTime, bpTime)
+            end
         end
     end
     
-    -- 条件2：刷新疾病
-    if not decision and self:HasDiseaseGlyph() and minDuration < 3 and self:IsBloodOrDeathRuneReady() then
-        decision = true
+    -- 3. 防闪烁延迟处理
+    if not decision and (now - self.LastRecommendationTime < self.RecommendationLinger) then
+        return true
     end
     
+    -- 4. 打印与状态更新
     if decision then
         self.LastRecommendationTime = now
+        
+        if reason ~= self.LastReason or (now - self.LastPrintTime > 1.0) then
+            HekiliHelper:DebugPrint(string.format("|cFF00FF00[DK逻辑]|r %s", reason))
+            self.LastReason = reason
+            self.LastPrintTime = now
+        end
+    else
+        if self.LastReason ~= "" then
+            self.LastReason = ""
+        end
     end
     
     return decision

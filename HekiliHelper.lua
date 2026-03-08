@@ -544,11 +544,11 @@ function HekiliHelper:PrintRecommendationQueue()
         local fullString = table.concat(displayStrings, " | ")
         -- 只有当内容发生变化时才打印，避免在静止状态下刷屏
         if fullString ~= self.LastQueueString then
-            self:DebugPrint("|cFFFFFF00[推荐队列]|r " .. fullString)
+            -- self:DebugPrint("|cFFFFFF00[推荐队列]|r " .. fullString)
             self.LastQueueString = fullString
         end
     elseif self.LastQueueString ~= "empty" then
-        self:DebugPrint("|cFFFFFF00[推荐队列]|r 当前没有激活的推荐")
+        -- self:DebugPrint("|cFFFFFF00[推荐队列]|r 当前没有激活的推荐")
         self.LastQueueString = "empty"
     end
 end

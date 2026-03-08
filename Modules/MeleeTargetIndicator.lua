@@ -233,7 +233,7 @@ function Module:ShouldShowMeleeIndicator()
     -- 如果玩家在近战攻击中，不显示
     local inMeleeCombat = self:IsInMeleeCombat()
     if inMeleeCombat then
-        self:PrintStatus("近战检查", false)
+        -- self:PrintStatus("近战检查", false)
         return false
     end
     
@@ -247,7 +247,7 @@ function Module:ShouldShowMeleeIndicator()
     end
     
     -- 有近战范围内的敌人，且不在近战攻击中，显示图标
-    self:PrintStatus("最终检查", true)
+    -- self:PrintStatus("最终检查", true)
     return true
 end
 

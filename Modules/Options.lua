@@ -557,9 +557,12 @@ function Module:GetOptions()
                     desc = {
                         type = "description",
                         name = "为死亡骑士提供智能技能推荐。\n\n" ..
-                               "|cFF00FF00传染 (Pestilence) 触发逻辑:|r\n" ..
-                               "1. |cFFFFD700群体感染|r：装备|cFF00FFFF传染雕文|r，15码内超过2个目标无疾病，且符文就绪。\n" ..
-                               "2. |cFFFFD700刷新疾病|r：装备|cFF00FFFF疾病雕文|r，当前目标疾病时间 < 3秒，且符文就绪。",
+                               "|cFF00FF001. 群体感染 (AOE扩散):|r\n" ..
+                               "当装备|cFF00FFFF[传染雕文]|r，当前目标有双病，且15码内有|cFFFFD7001个及以上|r敌对目标无疾病时触发。\n\n" ..
+                               "|cFF00FF002. 刷新疾病 (单体刷新):|r\n" ..
+                               "当装备|cFF00FFFF[疾病雕文]|r，当前目标有双病，且满足以下时间阈值时触发：\n" ..
+                               "  • |cFFFFD700常规状态|r：双病均 < |cFFFFD7003.0秒|r (预留操作空间)。\n" ..
+                               "  • |cFFFFD700Boss战+大军就绪|r：双病均 < |cFFFFD7005.5秒|r (预留1个GCD及死亡大军的引导时间)。",
                         fontSize = "medium",
                         order = 2,
                         width = "full"
