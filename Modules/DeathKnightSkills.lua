@@ -33,7 +33,7 @@ local GLYPH_DISEASE_ID = 58680    -- 疾病雕文效果ID (用户提供的 63334
 Module.LastRecommendationTime = 0
 Module.LastPrintTime = 0
 Module.LastReason = ""
-Module.RecommendationLinger = 0.2 -- 推荐图标最少停留0.2秒
+Module.RecommendationLinger = 0.5 -- 增加到0.5秒以消除闪烁
 
 -- 辅助函数：判断是否为Boss
 function Module:IsBoss()
