@@ -271,92 +271,79 @@ function Module:GetPestilenceTargetInfo(range)
     return noDiseaseCount, othersWithHighTTDCount, anyOtherHighTTD
 end
 
--- 判断逻辑核心
+-- 判断逻辑核心 (卫语句优化版)
 function Module:ShouldRecommendPestilence()
-    -- 基础检查
+    -- 1. 基础配置与冷却快速失败
     local db = HekiliHelper.DB.profile
     if not db.deathKnight or not db.deathKnight.enabled then return false end
     
     local now = GetTime()
     local TTD = HekiliHelper.TTD
     
-    -- 1. 前置状态获取
     local isKnown = IsSpellKnown(PESTILENCE_SPELL_ID)
     local start, duration = GetSpellCooldown(PESTILENCE_SPELL_ID)
     local cdLeft = (start and start > 0) and (start + duration - now) or 0
-    local hasPesGlyph, hasDisGlyph, _ = self:CheckAllGlyphs()
     local runeReady, _ = self:IsBloodOrDeathRuneReady()
     
-    -- 2. 核心逻辑判断
+    if not (isKnown and cdLeft <= 1.5 and runeReady) then
+        return (now - self.LastRecommendationTime < self.RecommendationLinger)
+    end
+
+    -- 2. 疾病状态与双病检查
+    local hasFF, ffTime, hasBP, bpTime = self:GetTargetDiseaseStatus()
+    if not (hasFF and hasBP) then
+        return (now - self.LastRecommendationTime < self.RecommendationLinger)
+    end
+
+    -- 3. 环境与TTD数据
+    local noDiseaseCount, othersHighTTDCount, anyOtherHighTTD = self:GetPestilenceTargetInfo(15)
+    local targetTTD = TTD:GetTTD("target") or 99
+    
+    -- 4. 判定核心逻辑 (保持原有逻辑分支，扁平化结构)
     local decision = false
     local reason = ""
-    
-    if isKnown and cdLeft <= 1.5 and runeReady then
-        local noDiseaseCount, othersHighTTDCount, anyOtherHighTTD = self:GetPestilenceTargetInfo(15)
-        local hasFF, ffTime, hasBP, bpTime = self:GetTargetDiseaseStatus()
-        local targetTTD = TTD:GetTTD("target") or 99
-        
-        -- 计算当前刷新阈值
-        local refreshThreshold = 3.0
-        if self:IsBoss() and self:IsArmyReady() then
-            refreshThreshold = 5.5
+    local hasPesGlyph, hasDisGlyph, _ = self:CheckAllGlyphs()
+    local refreshThreshold = (self:IsBoss() and self:IsArmyReady()) and 5.5 or 3.0
+
+    -- 判定 A: 疾病同步 (优先级 1：需疾病雕文，且当前或周围有长寿命单位)
+    if hasDisGlyph and (anyOtherHighTTD or targetTTD > 4.5) and math.abs(ffTime - bpTime) > 3 then
+        decision = true
+        reason = string.format("同步: 疾病时间差过大(FF:%.1fs, BP:%.1fs)", ffTime, bpTime)
+
+    -- 判定 B: 规则 A (15码内有长寿命目标)
+    elseif anyOtherHighTTD then
+        -- 情况 1: 群体扩散 (传染雕文)
+        if hasPesGlyph and noDiseaseCount > 0 then
+            decision = true
+            reason = string.format("扩散: 15码内发现%d个高TTD目标且有%d个无病目标", othersHighTTDCount, noDiseaseCount)
+        -- 情况 2: 单体刷新 (疾病雕文)
+        elseif hasDisGlyph and ffTime < refreshThreshold and bpTime < refreshThreshold then
+            decision = true
+            reason = string.format("刷新: 当前目标双病即将到期(FF:%.1fs, BP:%.1fs)", ffTime, bpTime)
         end
-        
-        -- 核心逻辑：必须双病齐全
-        if hasFF and hasBP then
-            -- TTD 判断核心规则
-            if anyOtherHighTTD then
-                -- 规则 A: 15码内有长寿命目标 (TTD > 4.5s)
-                
-                -- 情况 1: 群体扩散 (传染雕文)
-                if hasPesGlyph and noDiseaseCount > 0 then
-                    decision = true
-                    reason = string.format("扩散: 15码内发现%d个高TTD目标且有%d个无病目标", othersHighTTDCount, noDiseaseCount)
-                end
-                
-                -- 情况 2: 单体刷新 (疾病雕文)
-                if not decision and hasDisGlyph and ffTime < refreshThreshold and bpTime < refreshThreshold then
-                    decision = true
-                    reason = string.format("刷新: 当前目标双病即将到期(FF:%.1fs, BP:%.1fs)", ffTime, bpTime)
-                end
-            else
-                -- 规则 B: 15码内所有其他目标 TTD 都很短 (< 4.5s)
-                -- 即使当前目标符合刷新条件，如果大家都要死了，也不推荐传染
-                if targetTTD > 4.5 then
-                    -- 仅在当前目标还能活很久，且没有其他目标可扩散时，考虑纯单体刷新
-                    if hasDisGlyph and ffTime < refreshThreshold and bpTime < refreshThreshold then
-                        decision = true
-                        reason = string.format("纯单体刷新: 仅当前目标高TTD(%.1fs)", targetTTD)
-                    end
-                else
-                    -- 当前目标和其他目标 TTD 都 < 4.5s -> 彻底放弃传染
-                    -- decision = false
-                end
-            end
+
+    -- 判定 C: 规则 B (仅当前目标高 TTD)
+    elseif targetTTD > 4.5 then
+        if hasDisGlyph and ffTime < refreshThreshold and bpTime < refreshThreshold then
+            decision = true
+            reason = string.format("纯单体刷新: 仅当前目标高TTD(%.1fs)", targetTTD)
         end
     end
-    
-    -- 3. 防闪烁延迟处理
-    if not decision and (now - self.LastRecommendationTime < self.RecommendationLinger) then
-        return true
-    end
-    
-    -- 4. 打印与状态更新
+
+    -- 5. 推荐确认与状态持久化
     if decision then
         self.LastRecommendationTime = now
-        
         if reason ~= self.LastReason or (now - self.LastPrintTime > 1.0) then
             HekiliHelper:DebugPrint(string.format("|cFF00FF00[DK逻辑]|r %s", reason))
             self.LastReason = reason
             self.LastPrintTime = now
         end
-    else
-        if self.LastReason ~= "" then
-            self.LastReason = ""
-        end
+        return true
     end
-    
-    return decision
+
+    -- 无决策时重置并检查停留时间
+    self.LastReason = ""
+    return (now - self.LastRecommendationTime < self.RecommendationLinger)
 end
 
 -- 插入逻辑
