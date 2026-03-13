@@ -245,6 +245,11 @@ function HekiliHelper:OnInitialize()
             deathKnight = {
                 enabled = (playerClass == "DEATHKNIGHT"),
             },
+            modeSwitcher = {
+                enabled = true,
+                offsetX = 5,
+                offsetY = 0,
+            },
         }
     }
     
@@ -307,6 +312,13 @@ function HekiliHelper:OnInitialize()
         self:DebugPrint("|cFF00FF00[HekiliHelper]|r DeathKnightSkills模块对象已存在")
     end
     
+    if not self.ModeSwitcher then
+        self.ModeSwitcher = {}
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r 创建ModeSwitcher模块对象")
+    else
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r ModeSwitcher模块对象已存在")
+    end
+
     if not self.BlankIcon then
         self.BlankIcon = {}
         self:DebugPrint("|cFF00FF00[HekiliHelper]|r 创建BlankIcon模块对象")
@@ -424,6 +436,7 @@ function HekiliHelper:InitializeModules()
         { name = "HealingShamanSkills", ref = self.HealingShamanSkills },
         { name = "HealingPriestSkills", ref = self.HealingPriestSkills },
         { name = "DeathKnightSkills", ref = self.DeathKnightSkills },
+        { name = "ModeSwitcher", ref = self.ModeSwitcher },
         { name = "BlankIcon", ref = self.BlankIcon },
         { name = "UIModifier", ref = self.UIModifier }
     }
@@ -596,4 +609,3 @@ HekiliHelper.HookUtils = {
         return true
     end
 }
-

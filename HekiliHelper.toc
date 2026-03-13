@@ -15,6 +15,7 @@ Modules\MeleeTargetIndicator.lua
 Modules\HealingShamanSkills.lua
 Modules\HealingPriestSkills.lua
 Modules\DeathKnightSkills.lua
+Modules\ModeSwitcher.lua
 Modules\BlankIcon.lua
 Modules\UIModifier.lua
 
