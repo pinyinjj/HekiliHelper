@@ -5,13 +5,13 @@ HekiliHelper 是一个魔兽世界（怀旧服/WLK）插件，旨在增强 **Hek
 ## 项目概览
 
 - **类型:** 魔兽世界插件 (Lua)
-- **框架:** [Ace3](https://www.curseforge.com/wow/addons/ace3) (AceAddon, AceDB, AceConfig, AceEvent)。
+- **框架:** [Ace3](https://www.curseforge.com/wow/addons/ace3) (AceAddon, AceDB, AceConfig, AceEvent)。       
 - **核心机制:** 通过挂钩 (Hook) `Hekili.Update` 函数，将自定义的动作推荐注入到 `Hekili.DisplayPool` 的 Primary 队列中。
 - **目标版本:** 魔兽世界怀旧服 (WLK/3.4.x)。
 
 ### 系统架构
 
-1.  **入口文件 (`HekiliHelper.lua`):** 
+1.  **入口文件 (`HekiliHelper.lua`):**
     - 初始化 Ace3 插件对象和数据库存档 (`HekiliHelperDB`)。
     - 管理内置的调试系统（`/hhdebugwin` 窗口）。
     - 负责所有模块的顺序初始化，并使用 `pcall` 保护初始化链。
@@ -20,7 +20,7 @@ HekiliHelper 是一个魔兽世界（怀旧服/WLK）插件，旨在增强 **Hek
     - `MeleeTargetIndicator.lua`: 核心功能之一。当玩家身边有敌人（5码内）但未攻击或目标超出范围时，在 Hekili 界面最前端插入“近战目标”提示。
     - `TTD.lua`: Time To Die 计算模块。通过采样单位血量变化，计算预计死亡时间，供其他逻辑（如 DK 传染、术士 DOT）使用。
     - `HealingShamanSkills.lua` / `HealingPriestSkills.lua`: 为治疗职业提供智能目标选择和基于血量/法强阈值的技能推荐。
-    - `DeathKnightSkills.lua`: 专门处理 DK 的疾病扩散（传染）和刷新逻辑。
+    - `DeathKnightSkills.lua`: 专门 handle DK 的疾病扩散（传染）和刷新逻辑。
     - `UIModifier.lua`: 对 Hekili 的原生 UI 元素进行微调。
 3.  **挂钩与注入逻辑:**
     - 使用 `HekiliHelper.HookUtils.Hook` 挂载在 `Hekili.Update` 之后运行。
@@ -30,10 +30,10 @@ HekiliHelper 是一个魔兽世界（怀旧服/WLK）插件，旨在增强 **Hek
 
 - **全局对象:** 主插件对象存储在 `_G.HekiliHelper`。
 - **配置访问:** 通过 `HekiliHelper.DB.profile` 访问持久化设置。
-- **调试系统:** 
+- **调试系统:**
     - 游戏内命令: `/hhdebug` (切换调试状态), `/hhdebugwin` (显示调试窗口)。
     - 使用 `HekiliHelper:DebugPrint(msg)` 进行记录。
-- **外部依赖:** 
+- **外部依赖:**
     - `LibRangeCheck-2.0`: 用于精确的距离检测。
     - `Hekili`: 必须处于启用状态，本插件依赖其 UI 队列和 API。
 

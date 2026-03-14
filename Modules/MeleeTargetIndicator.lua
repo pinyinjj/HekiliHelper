@@ -29,17 +29,17 @@ function Module:Initialize()
         HekiliHelper:Print("|cFFFF0000[MeleeIndicator]|r 错误: Hekili对象不存在")
         return false
     end
-    
+
     if not Hekili.Update then
         HekiliHelper:Print("|cFFFF0000[MeleeIndicator]|r 错误: Hekili.Update函数不存在")
         return false
     end
-    
+
     -- 使用HookUtils.Hook在Hekili.Update之后执行我们的逻辑
     local success = HekiliHelper.HookUtils.Hook(Hekili, "Update", function()
         Module:InsertMeleeIndicator()
     end, "after")
-    
+
     if success then
         return true
     else
