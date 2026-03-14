@@ -310,7 +310,12 @@ function Module:ShouldRecommendPestilence()
         decision = true
         reason = string.format("同步: 疾病时间差过大(FF:%.1fs, BP:%.1fs)", ffTime, bpTime)
 
-    -- 判定 B: 规则 A (15码内有长寿命目标)
+    -- 判定 B: 3秒刷新规则 (核心逻辑：任一疾病 < 3s 且有疾病雕文)
+    elseif hasDisGlyph and (ffTime < 3.0 or bpTime < 3.0) then
+        decision = true
+        reason = string.format("刷新(3秒规则): 疾病即将到期(FF:%.1fs, BP:%.1fs)", ffTime, bpTime)
+
+    -- 判定 C: 规则 A (15码内有长寿命目标)
     elseif anyOtherHighTTD then
         -- 情况 1: 群体扩散 (传染雕文)
         if hasPesGlyph and noDiseaseCount > 0 then
@@ -322,7 +327,7 @@ function Module:ShouldRecommendPestilence()
             reason = string.format("刷新: 当前目标双病即将到期(FF:%.1fs, BP:%.1fs)", ffTime, bpTime)
         end
 
-    -- 判定 C: 规则 B (仅当前目标高 TTD)
+    -- 判定 D: 规则 B (仅当前目标高 TTD)
     elseif targetTTD > 4.5 then
         if hasDisGlyph and ffTime < refreshThreshold and bpTime < refreshThreshold then
             decision = true
@@ -416,6 +421,23 @@ function Module:InsertSkillForDisplay(dispName, UI)
     slot.isDeathKnightSkill = true
     slot.originalRecommendation = originalSlot
     
+    -- 清空后续位置以“暂停”队列，确保只显示传染
+    for i = 2, 4 do
+        if Queue[i] then
+            -- 如果已经是DK技能，直接清空；如果是Hekili原始技能，存入originalRecommendation
+            if Queue[i].isDeathKnightSkill then
+                for k, v in pairs(Queue[i]) do Queue[i][k] = nil end
+            elseif Queue[i].actionName and Queue[i].actionName ~= "" then
+                Queue[i].originalRecommendation = {}
+                for k, v in pairs(Queue[i]) do 
+                    Queue[i].originalRecommendation[k] = v
+                    Queue[i][k] = nil
+                end
+            end
+            Queue[i].isDeathKnightSkill = true -- 标记为已处理，防止被重复清空或恢复错误
+        end
+    end
+
     if not Hekili.Class.abilities["pestilence"] then
         Hekili.Class.abilities["pestilence"] = {
             key = "pestilence",
