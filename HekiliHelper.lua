@@ -33,7 +33,13 @@ function HekiliHelper:CreateDebugWindow()
     frame:SetScript("OnDragStart", frame.StartMoving)
     frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
     frame:Hide()
-    
+
+    -- 隐藏模板自带的关闭按钮（我们使用自己的关闭按钮来控制调试模式）
+    local defaultCloseButton = _G["HekiliHelperDebugWindowCloseButton"]
+    if defaultCloseButton then
+        defaultCloseButton:Hide()
+    end
+
     -- 设置标题
     frame.TitleText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     frame.TitleText:SetPoint("LEFT", frame.TitleBg, "LEFT", 5, 0)

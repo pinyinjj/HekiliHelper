@@ -335,6 +335,14 @@ function Module:ShouldRecommendPestilence()
         end
     end
 
+    -- 判定 D: 双病但其中一个即将到期 (新增条件)
+    if not decision and hasFF and hasBP then
+        if ffTime < refreshThreshold or bpTime < refreshThreshold then
+            decision = true
+            reason = string.format("单病刷新: 双病中有一个即将到期(FF:%.1fs, BP:%.1fs)", ffTime, bpTime)
+        end
+    end
+
     -- 5. 推荐确认与状态持久化
     if decision then
         self.LastRecommendationTime = now
