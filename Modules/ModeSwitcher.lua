@@ -30,18 +30,11 @@ function Module:Initialize()
         return false
     end
 
-    -- 初始化配置
-    if not HekiliHelper.DB.profile.modeSwitcher then
-        HekiliHelper.DB.profile.modeSwitcher = {
-            enabled = true,
-            offsetX = 5,
-            offsetY = 0
-        }
-    end
-    self.db = HekiliHelper.DB.profile.modeSwitcher
-
-    HekiliHelper:DebugPrint(string.format("|cFF00FF00[ModeSwitcher]|r 配置状态: enabled=%s", tostring(self.db.enabled)))
-    if not self.db.enabled then return true end
+    -- 使用固定的偏移配置
+    self.db = {
+        offsetX = 30,
+        offsetY = 100
+    }
 
     -- 使用循环检查，直到 Hekili 框架准备就绪
     local checkCount = 0
@@ -254,7 +247,7 @@ function Module:CreateUI(parent)
                 if lastButton then
                     -- 直接设置到最后一个按钮的右侧，垂直居中
                     self:ClearAllPoints()
-                    self:SetPoint("CENTER", lastButton, "RIGHT", self.module.db.offsetX, 0)
+                    self:SetPoint("CENTER", lastButton, "RIGHT", self.module.db.offsetX, self.module.db.offsetY)
                 end
             end
 
