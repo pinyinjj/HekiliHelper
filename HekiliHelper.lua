@@ -35,9 +35,9 @@ function HekiliHelper:CreateDebugWindow()
     frame:Hide()
 
     -- 隐藏模板自带的关闭按钮（我们使用自己的关闭按钮来控制调试模式）
-    local defaultCloseButton = _G["HekiliHelperDebugWindowCloseButton"]
-    if defaultCloseButton then
-        defaultCloseButton:Hide()
+    -- 使用 frame.CloseButton 直接访问模板创建的关闭按钮
+    if frame.CloseButton then
+        frame.CloseButton:Hide()
     end
 
     -- 设置标题
