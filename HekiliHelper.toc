@@ -11,6 +11,7 @@
 HekiliHelper.lua
 Modules/Options.lua
 Modules\TTD.lua
+Modules\FeralDruidSkills.lua
 Modules\MeleeTargetIndicator.lua
 Modules\HealingShamanSkills.lua
 Modules\HealingPriestSkills.lua

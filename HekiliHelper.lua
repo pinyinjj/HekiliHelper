@@ -441,6 +441,7 @@ function HekiliHelper:InitializeModules()
     -- 模块列表
     local modules = {
         { name = "TTD", ref = self.TTD },
+        { name = "FeralDruidSkills", ref = self.FeralDruidSkills },
         { name = "MeleeTargetIndicator", ref = self.MeleeTargetIndicator },
         { name = "HealingShamanSkills", ref = self.HealingShamanSkills },
         { name = "HealingPriestSkills", ref = self.HealingPriestSkills },
