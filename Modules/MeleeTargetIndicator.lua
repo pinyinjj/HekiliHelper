@@ -23,6 +23,11 @@ end
 
 local Module = HekiliHelper.MeleeTargetIndicator
 
+-- 停留时间配置 (1秒，防止闪烁)
+Module.RecommendationLinger = 0.8
+Module.LastRecommendationTime = 0
+Module.LastShouldShow = false
+
 -- 模块初始化
 function Module:Initialize()
     if not Hekili then
@@ -45,6 +50,29 @@ function Module:Initialize()
     else
         return false
     end
+end
+
+-- 持续覆盖函数：Hook UI 的 OnUpdate 实现每帧覆盖
+function Module:StartContinuousOverride()
+    local displays = Hekili.DisplayPool
+    if not displays or not displays.Primary then
+        C_Timer.After(0.1, function() Module:StartContinuousOverride() end)
+        return
+    end
+
+    local UI = displays.Primary
+    if self.ContinuousOverrideActive then return end
+    self.ContinuousOverrideActive = true
+
+    -- Hook UI 的 OnUpdate
+    local originalOnUpdate = UI:GetScript("OnUpdate")
+    UI:SetScript("OnUpdate", function(self, elapsed)
+        if originalOnUpdate then
+            originalOnUpdate(self, elapsed)
+        end
+        -- 每帧都执行强制插入
+        Module:ForceInsertMeleeIndicator()
+    end)
 end
 
 -- 获取职业图标路径
@@ -139,48 +167,181 @@ function Module:PrintDetailedDebug()
     ))
 end
 
--- 插入逻辑
+-- 获取用户设置的显示图标数量（1-10）
+function Module:GetNumIcons()
+    local profile = Hekili.DB and Hekili.DB.profile
+    if profile and profile.displays and profile.displays.Primary then
+        return profile.displays.Primary.numIcons or 3
+    end
+    return 3  -- 默认值（适配1-10）
+end
+
+-- 强制插入逻辑（用于每个Update周期后强制覆盖队列）
+function Module:ForceInsertMeleeIndicator()
+    -- 检查开关
+    local db = HekiliHelper.DB and HekiliHelper.DB.profile and HekiliHelper.DB.profile.meleeIndicator
+    if not db or not db.enabled then
+        if self.IsActive then
+            self:RemoveMeleeIndicator()
+            self.IsActive = false
+        end
+        return
+    end
+
+    -- 检查是否应该显示
+    local inMelee = self:IsInMeleeCombat()
+    local enemies = self:CountEnemiesInMeleeRange()
+    local shouldShow = (not inMelee) and (enemies > 0)
+
+    local displays = Hekili.DisplayPool
+    if not displays or not displays.Primary then return end
+
+    local UI = displays.Primary
+    if not UI.Recommendations then return end
+    local Queue = UI.Recommendations
+
+    -- 如果不应该显示但之前是活跃状态，需要移除
+    if not shouldShow then
+        if self.IsActive then
+            -- 动态获取用户设置的显示数量
+            local numIcons = self:GetNumIcons()
+
+            -- 移除时也进行队列移动，创建空槽位而不是nil
+            for i = 1, numIcons - 1 do
+                if Queue[i + 1] then
+                    Queue[i] = Queue[i + 1]
+                else
+                    Queue[i] = Queue[i] or {}
+                end
+            end
+            Queue[numIcons] = Queue[numIcons] or {}
+
+            UI.NewRecommendations = true
+            self.IsActive = false
+        end
+        return
+    end
+
+    -- 如果已经有指示器在位置1，也认为是活跃状态
+    if Queue[1] and Queue[1].isMeleeIndicator then
+        self.IsActive = true
+        return
+    end
+
+    -- 准备插入图标
+    local classIcon = self:GetClassIconPath()
+    if not classIcon then return end
+
+    -- 准备插入图标
+    local classIcon = self:GetClassIconPath()
+    if not classIcon then return end
+
+    -- 动态获取用户设置的显示数量
+    local numIcons = self:GetNumIcons()
+
+    -- 方案：将原队列向后移动，保持原推荐不丢失
+    -- 保存原始队列以便恢复
+    local originalQueue = {}
+    -- 只保存用户设置的数量
+    for i = 1, numIcons do
+        if Queue[i] then
+            originalQueue[i] = {}
+            for k, v in pairs(Queue[i]) do
+                originalQueue[i][k] = v
+            end
+        end
+    end
+
+    -- 将队列向后移动，但只移动存在的元素，避免nil导致报错
+    -- 根据 numIcons 动态处理
+    for i = numIcons, 2, -1 do
+        if originalQueue[i - 1] then
+            Queue[i] = originalQueue[i - 1]
+        else
+            -- 如果原来的位置没有内容，创建一个空槽位而不是nil，避免Hekili报错
+            Queue[i] = Queue[i] or {}
+        end
+    end
+
+    -- 在位置1插入近战指示器
+    Queue[1] = {}
+    local slot = Queue[1]
+    slot.index = 1
+    slot.actionName = "melee_target_indicator"
+    slot.texture = classIcon
+    slot.isMeleeIndicator = true
+    slot.originalRecommendation = originalQueue[1]  -- 保存原始位置1的内容
+    slot.time = 0
+    slot.exact_time = GetTime()
+    slot.delay = 0
+    slot.display = "Primary"
+
+    -- 注册虚拟技能
+    if not Hekili.Class.abilities["melee_target_indicator"] then
+        Hekili.Class.abilities["melee_target_indicator"] = {
+            key = "melee_target_indicator",
+            name = "近战目标",
+            texture = classIcon,
+            id = 0,
+            cast = 0,
+            gcd = "off",
+        }
+    end
+
+    UI.NewRecommendations = true
+    self.IsActive = true
+end
+
+-- 插入逻辑（带停留时间，用于备用）
 function Module:InsertMeleeIndicator()
-    -- 频率限制：Hekili.Update调用极其频繁，在这里做个简单限制或只在调试时打印
-    -- self:PrintDetailedDebug()
+    local now = GetTime()
 
     -- 检查开关
     local db = HekiliHelper.DB and HekiliHelper.DB.profile and HekiliHelper.DB.profile.meleeIndicator
     if not db or not db.enabled then
         self:RemoveMeleeIndicator()
+        self.LastShouldShow = false
+        self.LastRecommendationTime = now
         return
     end
-    
-    -- 只要开关开了，我们就检查是否需要显示
+
+    -- 检查是否需要显示
     local inMelee = self:IsInMeleeCombat()
     local enemies = self:CountEnemiesInMeleeRange()
     local shouldShow = (not inMelee) and (enemies > 0)
-    
+
     local displays = Hekili.DisplayPool
     if not displays or not displays.Primary then return end
-    
+
     local UI = displays.Primary
     if not UI.Recommendations then return end
     local Queue = UI.Recommendations
-    
-    -- 如果不应该显示，移除
+
+    -- 停留时间判断：如果条件不再满足，但仍在停留时间内，保持显示
     if not shouldShow then
-        -- 仅当队列中确实有指示器时才执行移除，避免频繁清理
-        if Queue[1] and Queue[1].isMeleeIndicator then
+        local lingerExpired = (now - self.LastRecommendationTime) >= self.RecommendationLinger
+
+        -- 如果指示器存在且停留时间已过，移除
+        if Queue[1] and Queue[1].isMeleeIndicator and lingerExpired then
             self:RemoveMeleeIndicator()
+            self.LastShouldShow = false
         end
+        -- 更新状态，但不立即移除
+        self.LastShouldShow = shouldShow
         return
     end
-    
-    -- 如果已经有指示器且在位置1，跳过
+
+    -- 如果已经有指示器且在位置1，更新时间戳并返回
     if Queue[1] and Queue[1].isMeleeIndicator then
+        self.LastRecommendationTime = now
+        self.LastShouldShow = shouldShow
         return
     end
-    
+
     -- 准备插入图标
     local classIcon = self:GetClassIconPath()
     if not classIcon then return end
-    
+
     -- 保存原位1的推荐内容
     local originalSlot = nil
     if Queue[1] and not Queue[1].isMeleeIndicator then
@@ -214,25 +375,36 @@ function Module:InsertMeleeIndicator()
     end
     
     UI.NewRecommendations = true
+
+    -- 更新状态
+    self.LastRecommendationTime = GetTime()
+    self.LastShouldShow = true
 end
 
 -- 移除逻辑
 function Module:RemoveMeleeIndicator()
     local displays = Hekili.DisplayPool
     if not displays or not displays.Primary then return end
-    
+
     local UI = displays.Primary
     local Queue = UI.Recommendations
     if not Queue then return end
-    
+
     if Queue[1] and Queue[1].isMeleeIndicator then
-        if Queue[1].originalRecommendation then
-            local original = Queue[1].originalRecommendation
-            for k, v in pairs(Queue[1]) do Queue[1][k] = nil end
-            for k, v in pairs(original) do Queue[1][k] = v end
-        else
-            Queue[1] = nil
+        -- 动态获取用户设置的显示数量
+        local numIcons = self:GetNumIcons()
+
+        -- 将队列向前移动，创建空槽位而不是nil
+        for i = 1, numIcons - 1 do
+            if Queue[i + 1] then
+                Queue[i] = Queue[i + 1]
+            else
+                Queue[i] = Queue[i] or {}
+            end
         end
+        -- 最后一个位置创建空槽位
+        Queue[numIcons] = Queue[numIcons] or {}
+
         UI.NewRecommendations = true
     end
 end

@@ -65,8 +65,11 @@ function HekiliHelper:CreateDebugWindow()
     end)
     editBox:SetScript("OnTextChanged", function(self)
         scrollFrame:UpdateScrollChildRect()
-        local min, max = scrollFrame:GetScrollRange()
-        if max > 0 then
+        local min, max = 0, 0
+        if scrollFrame.GetScrollRange then
+            min, max = scrollFrame:GetScrollRange()
+        end
+        if max and max > 0 then
             scrollFrame:SetScrollOffset(max)
         end
     end)
