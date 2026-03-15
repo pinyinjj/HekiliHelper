@@ -121,21 +121,63 @@ function Module:GetPrimaryIconSize(parent)
     
     return size
 end
+-- 获取最后一个实际显示的按钮
+function Module:GetLastButton()
+    local displays = Hekili.DisplayPool
+    if not displays or not displays.Primary then return nil end
+
+    local UI = displays.Primary
+    if not UI.Buttons then return nil end
+
+    -- 找到最后一个可见的按钮
+    local lastButton = nil
+    for _, button in ipairs(UI.Buttons) do
+        if button and button:IsShown() then
+            lastButton = button
+        end
+    end
+
+    return lastButton
+end
+
 -- 计算 Hekili 队列的总偏移量
 function Module:CalculateQueueOffset()
+    -- 优先尝试直接获取最后一个按钮的位置
+    local lastButton = self:GetLastButton()
+    if lastButton and lastButton.GetRight then
+        -- 获取最后一个按钮的右边缘相对于 Primary 框架的位置
+        local lastButtonRight = lastButton:GetRight()
+        local parentRight = nil
+
+        local displays = Hekili.DisplayPool
+        if displays and displays.Primary then
+            parentRight = displays.Primary:GetRight()
+        end
+
+        if lastButtonRight and parentRight then
+            -- 返回最后一个按钮右边缘相对于 Primary 右边缘的偏移
+            -- 正值表示在 Primary 右边缘的右侧
+            local offsetX = lastButtonRight - parentRight
+            if offsetX > -100 and offsetX < 200 then
+                return offsetX
+            end
+        end
+    end
+
+    -- 回退方案：使用配置计算
     if not Hekili or not Hekili.DB or not Hekili.DB.profile then return 0 end
 
     local cfg = Hekili.DB.profile.displays.Primary
     if not cfg then return 0 end
 
-    local numIcons = cfg.iconsShown or 1
+    -- 使用 numIcons（正确的配置字段名）
+    local numIcons = cfg.numIcons or 1
     local buttonSize = cfg.buttonSize or 50
     local spacing = cfg.spacing or 5
     local zoom = cfg.zoom or 1
     if zoom > 10 then zoom = zoom / 100 end
 
     -- 偏移量 = (图标数量 - 1) * (缩放后的图标大小 + 间距)
-    -- 我们锚定在第一个图标的 RIGHT，所以只需要跳过剩余的 (numIcons - 1) 个图标
     return (numIcons - 1) * (buttonSize * zoom + spacing)
 end
 
@@ -144,15 +186,14 @@ function Module:CreateUI(parent)
     if self.frame then return end
 
     local size = self:GetPrimaryIconSize(parent)
-    local queueOffset = self:CalculateQueueOffset()
 
     -- 父框架设为 UIParent，避免随 Hekili 隐藏而隐藏
     local frame = CreateFrame("Button", "HekiliHelperModeButton", UIParent, "BackdropTemplate")
-    frame:SetSize(size, size) 
+    frame:SetSize(size, size)
 
-    -- 锚定到 Hekili 第一个图标的右侧，加上跳过整个队列的偏移
+    -- 初始位置，稍后会在 OnUpdate 中动态调整
     frame:ClearAllPoints()
-    frame:SetPoint("LEFT", parent, "RIGHT", queueOffset + self.db.offsetX, self.db.offsetY)
+    frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
 
     frame:SetFrameStrata("HIGH")
     frame:SetClampedToScreen(true)
@@ -178,9 +219,10 @@ function Module:CreateUI(parent)
     frame.Text:SetPoint("CENTER", 0, 0)
     local font, _, flags = frame.Text:GetFont()
     frame.Text:SetFont(font, 13, "OUTLINE")
-    
+
     -- 保存父框架引用，用于重新对齐
     frame.hekiliParent = parent
+    frame.module = self  -- 保存模块引用以便在 OnUpdate 中访问
 
     -- 点击事件
     frame:RegisterForClicks("LeftButtonUp")
@@ -191,18 +233,33 @@ function Module:CreateUI(parent)
             end
         end
     end)
-    
-    -- 注册更新事件，如果 Hekili 框架移动，我们也移动（Hekili 框架通常是可移动的）
+
+    -- 注册更新事件，动态锚定到最后一个显示的图标
     frame:SetScript("OnUpdate", function(self, elapsed)
         if not self.lastUpdate then self.lastUpdate = 0 end
         self.lastUpdate = self.lastUpdate + elapsed
-        if self.lastUpdate > 0.5 then -- 每0.5秒校准一次位置
+        if self.lastUpdate > 0.1 then -- 每0.1秒校准一次位置
             self.lastUpdate = 0
+
+            -- 获取最后一个可见的按钮
+            local displays = Hekili.DisplayPool
+            if displays and displays.Primary and displays.Primary.Buttons then
+                local lastButton = nil
+                for _, btn in ipairs(displays.Primary.Buttons) do
+                    if btn and btn:IsShown() and btn:IsVisible() then
+                        lastButton = btn
+                    end
+                end
+
+                if lastButton then
+                    -- 直接设置到最后一个按钮的右侧，垂直居中
+                    self:ClearAllPoints()
+                    self:SetPoint("CENTER", lastButton, "RIGHT", self.module.db.offsetX, 0)
+                end
+            end
+
             if self.hekiliParent and self.hekiliParent.IsShown and self.hekiliParent:IsShown() then
                 self:SetAlpha(1)
-            else
-                -- 如果 Hekili 彻底隐藏了，我们也隐藏，除非用户想一直看着它
-                -- self:SetAlpha(0.3) -- 淡淡显示
             end
         end
     end)
