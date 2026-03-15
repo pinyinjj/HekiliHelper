@@ -24,7 +24,7 @@ end
 local Module = HekiliHelper.MeleeTargetIndicator
 
 -- 停留时间配置 (1秒，防止闪烁)
-Module.RecommendationLinger = 1.0
+Module.RecommendationLinger = 0.8
 Module.LastRecommendationTime = 0
 Module.LastShouldShow = false
 
@@ -34,16 +34,27 @@ function Module:Initialize()
         HekiliHelper:Print("|cFFFF0000[MeleeIndicator]|r 错误: Hekili对象不存在")
         return false
     end
-
+    
     if not Hekili.Update then
         HekiliHelper:Print("|cFFFF0000[MeleeIndicator]|r 错误: Hekili.Update函数不存在")
         return false
     end
+    
+    -- 使用HookUtils.Wrap + UI OnUpdate 持续覆盖
+    local success = HekiliHelper.HookUtils.Wrap(Hekili, "Update", function(oldFunc, self, ...)
+        -- 调用原函数生成推荐
+        local result = oldFunc(self, ...)
 
-    -- 使用HookUtils.Hook在Hekili.Update之后执行我们的逻辑
-    local success = HekiliHelper.HookUtils.Hook(Hekili, "Update", function()
-        Module:InsertMeleeIndicator()
-    end, "after")
+        -- 立即执行插入
+        Module:ForceInsertMeleeIndicator()
+
+        -- 启动持续覆盖（如果还没启动）
+        if not self.ContinuousOverrideActive then
+            self:StartContinuousOverride()
+        end
+
+        return result
+    end)
 
     if success then
         return true
@@ -203,19 +214,14 @@ function Module:ForceInsertMeleeIndicator()
     -- 如果不应该显示但之前是活跃状态，需要移除
     if not shouldShow then
         if self.IsActive then
-            -- 动态获取用户设置的显示数量
-            local numIcons = self:GetNumIcons()
-
-            -- 移除时也进行队列移动，创建空槽位而不是nil
-            for i = 1, numIcons - 1 do
-                if Queue[i + 1] then
-                    Queue[i] = Queue[i + 1]
-                else
-                    Queue[i] = Queue[i] or {}
-                end
+            -- 恢复原始推荐
+            if Queue[1] and Queue[1].originalRecommendation then
+                local original = Queue[1].originalRecommendation
+                for k, v in pairs(Queue[1]) do Queue[1][k] = nil end
+                for k, v in pairs(original) do Queue[1][k] = v end
+            else
+                Queue[1] = nil
             end
-            Queue[numIcons] = Queue[numIcons] or {}
-
             UI.NewRecommendations = true
             self.IsActive = false
         end
@@ -227,6 +233,10 @@ function Module:ForceInsertMeleeIndicator()
         self.IsActive = true
         return
     end
+
+    -- 准备插入图标
+    local classIcon = self:GetClassIconPath()
+    if not classIcon then return end
 
     -- 准备插入图标
     local classIcon = self:GetClassIconPath()
@@ -248,15 +258,10 @@ function Module:ForceInsertMeleeIndicator()
         end
     end
 
-    -- 将队列向后移动，但只移动存在的元素，避免nil导致报错
+    -- 将队列向后移动
     -- 根据 numIcons 动态处理
     for i = numIcons, 2, -1 do
-        if originalQueue[i - 1] then
-            Queue[i] = originalQueue[i - 1]
-        else
-            -- 如果原来的位置没有内容，创建一个空槽位而不是nil，避免Hekili报错
-            Queue[i] = Queue[i] or {}
-        end
+        Queue[i] = originalQueue[i - 1]
     end
 
     -- 在位置1插入近战指示器
@@ -387,19 +392,14 @@ function Module:RemoveMeleeIndicator()
     if not Queue then return end
 
     if Queue[1] and Queue[1].isMeleeIndicator then
-        -- 动态获取用户设置的显示数量
-        local numIcons = self:GetNumIcons()
-
-        -- 将队列向前移动，创建空槽位而不是nil
-        for i = 1, numIcons - 1 do
-            if Queue[i + 1] then
-                Queue[i] = Queue[i + 1]
-            else
-                Queue[i] = Queue[i] or {}
-            end
+        -- 恢复原始推荐
+        if Queue[1].originalRecommendation then
+            local original = Queue[1].originalRecommendation
+            for k, v in pairs(Queue[1]) do Queue[1][k] = nil end
+            for k, v in pairs(original) do Queue[1][k] = v end
+        else
+            Queue[1] = nil
         end
-        -- 最后一个位置创建空槽位
-        Queue[numIcons] = Queue[numIcons] or {}
 
         UI.NewRecommendations = true
     end
