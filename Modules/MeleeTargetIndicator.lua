@@ -24,7 +24,7 @@ end
 local Module = HekiliHelper.MeleeTargetIndicator
 
 -- 停留时间配置 (1秒，防止闪烁)
-Module.RecommendationLinger = 0.8
+Module.RecommendationLinger = 1.0
 Module.LastRecommendationTime = 0
 Module.LastShouldShow = false
 
@@ -227,10 +227,6 @@ function Module:ForceInsertMeleeIndicator()
         self.IsActive = true
         return
     end
-
-    -- 准备插入图标
-    local classIcon = self:GetClassIconPath()
-    if not classIcon then return end
 
     -- 准备插入图标
     local classIcon = self:GetClassIconPath()
