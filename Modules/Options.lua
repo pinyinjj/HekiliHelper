@@ -216,7 +216,57 @@ function Module:GetOptions()
                     },
                 }
             },
-            
+
+            feralDruid = {
+                type = "group",
+                name = "猫德P2两件套",
+                order = 1.5,
+                args = {
+                    header = {
+                        type = "header",
+                        name = "猫德P2两件套设置",
+                        order = 1,
+                        width = "full"
+                    },
+
+                    desc = {
+                        type = "description",
+                        name = "当队列中下一个技能是精灵之火（野性）且精灵之火在冷却中时，自动插入愈合技能。",
+                        fontSize = "medium",
+                        order = 2,
+                        width = "full"
+                    },
+
+                    enabled = {
+                        type = "toggle",
+                        name = "启用",
+                        desc = "启用或禁用猫德P2两件套功能。",
+                        order = 10,
+                        width = "full",
+                        get = function()
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return true
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.feralDruid then
+                                db.feralDruid = {}
+                            end
+                            return db.feralDruid.enabled ~= false
+                        end,
+                        set = function(info, val)
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.feralDruid then
+                                db.feralDruid = {}
+                            end
+                            db.feralDruid.enabled = val
+                        end
+                    },
+                }
+            },
+
             ttd = {
                 type = "group",
                 name = "TTD 计算器",

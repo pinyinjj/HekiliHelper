@@ -28,29 +28,46 @@ local PREDATORY_SWIFTNESS_ID = 69369 -- 掠食者的迅捷 (P2 2pc 相关)
 
 -- 核心逻辑验证函数 (同步/异步逻辑公用)
 function Module:ShouldRecommendRegrowth()
+    -- 0. 打印调试信息
+    local db = HekiliHelper.DB and HekiliHelper.DB.profile
+    -- HekiliHelper:DebugPrint(string.format("|cFF00FF00[FeralDruid]|r 开始检查... db=%s, feralDruid=%s", tostring(db), tostring(db and db.feralDruid)))
+
     -- 1. 检查配置
-    local db = HekiliHelper.DB.profile
-    if not db.feralDruid or not db.feralDruid.enabled or not db.feralDruid.p2TwoPiece then
-        return false, "配置关闭"
+    if not db then
+        -- HekiliHelper:DebugPrint("|cFFFF0000[FeralDruid]|r DB不存在")
+        return false, "DB不存在"
     end
+    if not db.feralDruid then
+        -- 配置不存在时默认为开启
+        -- HekiliHelper:DebugPrint("|cFF00FF00[FeralDruid]|r 配置不存在，默认为开启")
+    elseif db.feralDruid.enabled == false then
+        -- HekiliHelper:DebugPrint("|cFFFF0000[FeralDruid]|r 功能未启用")
+        return false, "功能未启用"
+    end
+    -- HekiliHelper:DebugPrint("|cFF00FF00[FeralDruid]|r 配置检查通过")
 
     -- 2. 检查法力值
     local currentMana = UnitPower("player", 0)
-    if currentMana <= 2500 then 
+    if currentMana <= 2500 then
+        -- HekiliHelper:DebugPrint(string.format("|cFFFF0000[FeralDruid]|r 法力值不足: %d", currentMana))
         return false, "法力值不足"
     end
 
-    -- 3. 检查Buff (掠食者的迅捷)
+    -- 3. 检查Buff (掠食者的迅捷) - 需要检查是玩家自身施放的
     local hasPredatorySwiftness = false
     for i = 1, 40 do
-        local _, _, _, _, _, _, _, _, _, spellId = UnitBuff("player", i)
-        if not _ then break end
-        if spellId == PREDATORY_SWIFTNESS_ID then
+        local name, icon, stacks, dispelType, duration, expirationTime, unitCaster, canStealOrPurge, nameplateShowPersonal, spellId = UnitBuff("player", i)
+        if not name then break end
+        if spellId == PREDATORY_SWIFTNESS_ID and unitCaster == "player" then
             hasPredatorySwiftness = true
             break
         end
     end
-    if not hasPredatorySwiftness then return false, "没有掠食者的迅捷Buff" end
+    if not hasPredatorySwiftness then
+        -- HekiliHelper:DebugPrint("|cFFFF0000[FeralDruid]|r 没有掠食者的迅捷Buff(玩家自身)")
+        return false, "没有掠食者的迅捷Buff"
+    end
+    -- HekiliHelper:DebugPrint("|cFF00FF00[FeralDruid]|r 有掠食者迅捷Buff(玩家自身)")
 
     -- 4. 检查精灵之火冷却
     local start, duration = GetSpellCooldown(FAERIE_FIRE_FERAL_ID)
@@ -58,8 +75,12 @@ function Module:ShouldRecommendRegrowth()
         start, duration = GetSpellCooldown(FAERIE_FIRE_ID)
     end
     local cdLeft = (start and start > 0) and (start + duration - GetTime()) or 0
-    if cdLeft <= 1.5 then return false, string.format("精灵火CD不足(%.2fs)", cdLeft) end
+    -- HekiliHelper:DebugPrint(string.format("|cFF00FF00[FeralDruid]|r 精灵火CD: %.2fs", cdLeft))
+    if cdLeft <= 1.5 then
+        return false, string.format("精灵火CD不足(%.2fs)", cdLeft)
+    end
 
+    -- HekiliHelper:DebugPrint(string.format("|cFF00FF00[FeralDruid]|r 全部条件满足! CD:%.2fs, Mana:%d", cdLeft, currentMana))
     return true, string.format("满足(CD:%.2fs, Mana:%d)", cdLeft, currentMana)
 end
 
@@ -124,21 +145,27 @@ end
 -- 核心逻辑处理 (异步及主要入口)
 function Module:ProcessFeralLogic()
     if not Hekili or not Hekili.DisplayPool then return end
-    
+
     local should, reason = self:ShouldRecommendRegrowth()
-    
+    HekiliHelper:DebugPrint(string.format("|cFF00FF00[FeralDruid]|r ProcessFeralLogic: should=%s, reason=%s", tostring(should), reason))
+
     for dispName, UI in pairs(Hekili.DisplayPool) do
         if (dispName == "Primary" or dispName == "AOE") and UI.Active and UI.alpha > 0 then
             local Queue = UI.Recommendations
+            HekiliHelper:DebugPrint(string.format("|cFF00FF00[FeralDruid]|r 检查队列 %s, Queue[1]=%s", dispName, tostring(Queue and Queue[1])))
             if Queue and Queue[1] then
+                local nextAction = Queue[1].actionName or ""
+                local nextActionID = Queue[1].actionID or 0
+                HekiliHelper:DebugPrint(string.format("|cFF00FF00[FeralDruid]|r 当前推荐: actionName=%s, actionID=%d", nextAction, nextActionID))
+
                 if should then
-                    -- 检查当前是否推荐精灵之火 (或是我们已经插进去的愈合)
-                    local nextAction = Queue[1].actionName or ""
-                    local nextActionID = Queue[1].actionID or 0
-                    
-                    if nextAction == "faerie_fire_feral" or nextAction == "faerie_fire" or 
+                    -- 检查当前是否推荐精灵之火
+                    if nextAction == "faerie_fire_feral" or nextAction == "faerie_fire" or
                        nextActionID == FAERIE_FIRE_FERAL_ID or nextActionID == FAERIE_FIRE_ID then
+                        HekiliHelper:DebugPrint("|cFF00FF00[FeralDruid]|r 满足条件，插入愈合")
                         self:InsertRegrowth(dispName, UI, reason)
+                    else
+                        HekiliHelper:DebugPrint(string.format("|cFFFF0000[FeralDruid]|r 当前不是精灵火，不插入: %s", nextAction))
                     end
                 else
                     -- 不满足条件，如果是愈合则移除
