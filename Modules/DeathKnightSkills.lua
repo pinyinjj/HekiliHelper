@@ -34,6 +34,8 @@ Module.LastRecommendationTime = 0
 Module.LastPrintTime = 0
 Module.LastReason = ""
 Module.RecommendationLinger = 0.5 -- 增加到0.5秒以消除闪烁
+Module.IsActive = false
+Module.ContinuousOverrideActive = false
 
 -- 辅助函数：判断是否为Boss
 function Module:IsBoss()
@@ -69,74 +71,228 @@ function Module:CheckAllGlyphs()
     return hasPes, hasDis, found
 end
 
--- 模块初始化
-function Module:Initialize()
-    if not Hekili then return false end
-    
-    -- 只对死亡骑士生效
-    local _, class = UnitClass("player")
-    if class ~= "DEATHKNIGHT" then
-        return true
+-- 获取用户设置的显示图标数量（1-10）
+function Module:GetNumIcons()
+    local profile = Hekili.DB and Hekili.DB.profile
+    if profile and profile.displays and profile.displays.Primary then
+        return profile.displays.Primary.numIcons or 3
+    end
+    return 3  -- 默认值（适配1-10）
+end
+
+-- 持续覆盖函数：Hook UI 的 OnUpdate 实现每帧覆盖
+function Module:StartContinuousOverride()
+    local displays = Hekili.DisplayPool
+    if not displays or not displays.Primary then
+        C_Timer.After(0.1, function() Module:StartContinuousOverride() end)
+        return
     end
 
-    HekiliHelper:DebugPrint("|cFF00FF00[DeathKnight]|r 开始Hook Hekili.Update...")
-    
-    -- 使用“保存与恢复”模式，参考萨满模块
-    local success = HekiliHelper.HookUtils.Wrap(Hekili, "Update", function(oldFunc, self, ...)
-        -- 在Hekili生成推荐之前，先保存我们的技能，防止被清除
-        local savedSkills = {}
-        if Hekili and Hekili.DisplayPool then
-            for dispName, UI in pairs(Hekili.DisplayPool) do
-                if UI and UI.Recommendations then
-                    local Queue = UI.Recommendations
-                    savedSkills[dispName] = {}
-                    for i = 1, 4 do
-                        if Queue[i] and Queue[i].isDeathKnightSkill then
-                            savedSkills[dispName][i] = {}
-                            for k, v in pairs(Queue[i]) do
-                                savedSkills[dispName][i][k] = v
-                            end
-                        end
-                    end
-                end
-            end
+    local UI = displays.Primary
+    if self.ContinuousOverrideActive then return end
+    self.ContinuousOverrideActive = true
+
+    -- Hook UI 的 OnUpdate
+    local originalOnUpdate = UI:GetScript('OnUpdate')
+    UI:SetScript('OnUpdate', function(self, elapsed)
+        if originalOnUpdate then
+            originalOnUpdate(self, elapsed)
         end
-        
-        -- 调用原函数生成推荐
-        local result = oldFunc(self, ...)
-        
-        -- 在Hekili更新后立即尝试恢复并重新插入
-        C_Timer.After(0.001, function()
-            if Hekili and Hekili.DisplayPool then
-                for dispName, saved in pairs(savedSkills) do
-                    local UI = Hekili.DisplayPool[dispName]
-                    if UI and UI.Recommendations then
-                        local Queue = UI.Recommendations
-                        for i, savedSlot in pairs(saved) do
-                            if not Queue[i] or not Queue[i].isDeathKnightSkill then
-                                Queue[i] = {}
-                                for k, v in pairs(savedSlot) do
-                                    Queue[i][k] = v
-                                end
-                                UI.NewRecommendations = true
-                            end
-                        end
-                    end
-                end
-            end
-            
-            -- 执行核心逻辑
-            Module:InsertDeathKnightSkills()
-        end)
-        
-        return result
+        -- 每帧都执行强制插入
+        Module:ForceInsertPestilence()
     end)
-    
-    if success then
-        HekiliHelper:DebugPrint("|cFF00FF00[DeathKnight]|r 模块已初始化")
+end
+
+-- 模块初始化
+function Module:Initialize()
+    HekiliHelper:DebugPrint("[DK] ===== Initialize 开始 =====")
+
+    if not Hekili then
+        HekiliHelper:DebugPrint("[DK] Hekili不存在!")
+        return false
+    end
+    HekiliHelper:DebugPrint("[DK] Hekili存在")
+
+    -- 只对死亡骑士生效
+    local _, class = UnitClass("player")
+    HekiliHelper:DebugPrint("[DK] 玩家职业: " .. tostring(class))
+    if class ~= "DEATHKNIGHT" then
+        HekiliHelper:DebugPrint("[DK] 不是死亡骑士，跳过!")
         return true
     end
+    HekiliHelper:DebugPrint("[DK] 是死亡骑士，继续...")
+
+    -- 检查Hekili.Update是否存在
+    if not Hekili.Update then
+        HekiliHelper:DebugPrint("[DK] Hekili.Update不存在!")
+        return false
+    end
+    HekiliHelper:DebugPrint("[DK] Hekili.Update存在，准备Hook...")
+
+    -- 检查HookUtils.Wrap是否存在
+    if not HekiliHelper.HookUtils.Wrap then
+        HekiliHelper:DebugPrint("[DK] HookUtils.Wrap不存在!")
+        return false
+    end
+    HekiliHelper:DebugPrint("[DK] HookUtils.Wrap存在")
+
+    -- 使用HookUtils.Wrap + UI OnUpdate 持续覆盖
+    local success = HekiliHelper.HookUtils.Wrap(Hekili, "Update", function(oldFunc, self, ...)
+        local result = oldFunc(self, ...)
+        Module:ForceInsertPestilence()
+        if not Module.ContinuousOverrideActive then
+            Module:StartContinuousOverride()
+        end
+        return result
+    end)
+
+    if success then
+        HekiliHelper:DebugPrint("[DK] ===== Hook成功，模块初始化完成 =====")
+        return true
+    else
+        HekiliHelper:DebugPrint("[DK] HookUtils.Wrap失败!")
+    end
     return false
+end
+
+-- TTD模块按需初始化（仅当传染功能启用时）
+function Module:EnsureTTDInitialized()
+    local TTD = HekiliHelper.TTD
+    if TTD and TTD.Initialize and not TTD.initialized then
+        TTD:Initialize()
+        TTD.initialized = true
+    end
+end
+
+-- 强制插入逻辑（用于每个Update周期后强制覆盖队列）
+function Module:ForceInsertPestilence()
+    -- 检查开关
+    local db = HekiliHelper.DB.profile
+    if not db.deathKnight or not db.deathKnight.enabled then
+        if self.IsActive then
+            self:RemovePestilence()
+            self.IsActive = false
+        end
+        return
+    end
+
+    -- 按需初始化TTD模块（仅当传染启用时）
+    self:EnsureTTDInitialized()
+
+    -- 检查是否应该显示
+    local shouldShow = self:ShouldRecommendPestilence()
+    local displays = Hekili.DisplayPool
+    if not displays or not displays.Primary then
+        return
+    end
+
+    local UI = displays.Primary
+    if not UI.Recommendations then
+        return
+    end
+    local Queue = UI.Recommendations
+
+    -- 如果不应该显示但之前是活跃状态，需要移除
+    if not shouldShow then
+        if self.IsActive then
+            -- 恢复原始推荐
+            if Queue[1] and Queue[1].originalRecommendation then
+                local original = Queue[1].originalRecommendation
+                for k, v in pairs(Queue[1]) do Queue[1][k] = nil end
+                for k, v in pairs(original) do Queue[1][k] = v end
+            else
+                Queue[1] = nil
+            end
+            UI.NewRecommendations = true
+            self.IsActive = false
+        end
+        return
+    end
+
+    -- 如果已经有传染在位置1，也认为是活跃状态
+    if Queue[1] and Queue[1].isDeathKnightSkill and Queue[1].actionName == "pestilence" then
+        self.IsActive = true
+        return
+    end
+
+    -- 准备插入图标
+    local _, _, texture = GetSpellInfo(PESTILENCE_SPELL_ID)
+    if not texture then
+        return
+    end
+
+    -- 动态获取用户设置的显示数量
+    local numIcons = self:GetNumIcons()
+
+    -- 保存原始队列以便恢复
+    local originalQueue = {}
+    -- 只保存用户设置的数量
+    for i = 1, numIcons do
+        if Queue[i] then
+            originalQueue[i] = {}
+            for k, v in pairs(Queue[i]) do
+                originalQueue[i][k] = v
+            end
+        end
+    end
+
+    -- 将队列向后移动
+    -- 根据 numIcons 动态处理
+    for i = numIcons, 2, -1 do
+        Queue[i] = originalQueue[i - 1]
+    end
+
+    -- 在位置1插入传染
+    Queue[1] = {}
+    local slot = Queue[1]
+    slot.index = 1
+    slot.actionName = "pestilence"
+    slot.actionID = PESTILENCE_SPELL_ID
+    slot.texture = texture
+    slot.isDeathKnightSkill = true
+    slot.originalRecommendation = originalQueue[1]  -- 保存原始位置1的内容
+    slot.time = 0
+    slot.exact_time = GetTime()
+    slot.delay = 0
+    slot.display = "Primary"
+
+    -- 注册虚拟技能
+    if not Hekili.Class.abilities["pestilence"] then
+        Hekili.Class.abilities["pestilence"] = {
+            key = "pestilence",
+            name = "传染",
+            texture = texture,
+            id = PESTILENCE_SPELL_ID,
+            cast = 0,
+            gcd = "spell",
+        }
+    end
+
+    UI.NewRecommendations = true
+    self.IsActive = true
+end
+
+-- 移除传染图标
+function Module:RemovePestilence()
+    local displays = Hekili.DisplayPool
+    if not displays or not displays.Primary then return end
+
+    local UI = displays.Primary
+    local Queue = UI.Recommendations
+    if not Queue then return end
+
+    if Queue[1] and Queue[1].isDeathKnightSkill and Queue[1].actionName == "pestilence" then
+        -- 恢复原始推荐
+        if Queue[1].originalRecommendation then
+            local original = Queue[1].originalRecommendation
+            for k, v in pairs(Queue[1]) do Queue[1][k] = nil end
+            for k, v in pairs(original) do Queue[1][k] = v end
+        else
+            Queue[1] = nil
+        end
+
+        UI.NewRecommendations = true
+    end
 end
 
 -- 检查是否装备了传染雕文
@@ -155,11 +311,18 @@ end
 function Module:GetTargetDiseaseStatus()
     local hasFF, ffTime = false, 0
     local hasBP, bpTime = false, 0
-    
+
+    local targetExists = UnitExists("target")
+    if not targetExists then
+        return hasFF, ffTime, hasBP, bpTime
+    end
+
     for i = 1, 40 do
         local name, _, _, _, _, expirationTime, unitCaster, _, _, spellId = UnitDebuff("target", i)
-        if not name then break end
-        
+        if not name then
+            break
+        end
+
         if unitCaster == "player" then
             if spellId == FROST_FEVER_ID then
                 hasFF = true
@@ -170,7 +333,7 @@ function Module:GetTargetDiseaseStatus()
             end
         end
     end
-    
+
     return hasFF, ffTime, hasBP, bpTime
 end
 
@@ -275,68 +438,72 @@ end
 function Module:ShouldRecommendPestilence()
     -- 1. 基础配置与冷却快速失败
     local db = HekiliHelper.DB.profile
-    if not db.deathKnight or not db.deathKnight.enabled then return false end
-    
+    if not db.deathKnight or not db.deathKnight.enabled then
+        return false
+    end
+
     local now = GetTime()
     local TTD = HekiliHelper.TTD
-    
+
     local isKnown = IsSpellKnown(PESTILENCE_SPELL_ID)
     local start, duration = GetSpellCooldown(PESTILENCE_SPELL_ID)
     local cdLeft = (start and start > 0) and (start + duration - now) or 0
-    local runeReady, _ = self:IsBloodOrDeathRuneReady()
-    
+    local runeReady = self:IsBloodOrDeathRuneReady()
+
     if not (isKnown and cdLeft <= 1.5 and runeReady) then
-        return (now - self.LastRecommendationTime < self.RecommendationLinger)
+        local lingerResult = (now - self.LastRecommendationTime < self.RecommendationLinger)
+        return lingerResult
     end
 
     -- 2. 疾病状态与双病检查
     local hasFF, ffTime, hasBP, bpTime = self:GetTargetDiseaseStatus()
     if not (hasFF and hasBP) then
-        return (now - self.LastRecommendationTime < self.RecommendationLinger)
+        local lingerResult = (now - self.LastRecommendationTime < self.RecommendationLinger)
+        return lingerResult
     end
 
     -- 3. 环境与TTD数据
     local noDiseaseCount, othersHighTTDCount, anyOtherHighTTD = self:GetPestilenceTargetInfo(15)
     local targetTTD = TTD:GetTTD("target") or 99
-    
+
     -- 4. 判定核心逻辑 (保持原有逻辑分支，扁平化结构)
     local decision = false
     local reason = ""
-    local hasPesGlyph, hasDisGlyph, _ = self:CheckAllGlyphs()
-    local refreshThreshold = (self:IsBoss() and self:IsArmyReady()) and 5.5 or 3.0
+    local isBoss = self:IsBoss()
+    local armyReady = self:IsArmyReady()
+    local refreshThreshold = (isBoss and armyReady) and 5.5 or 3.0
 
-    -- 判定 A: 疾病同步 (优先级 1：需疾病雕文，且当前或周围有长寿命单位)
-    if hasDisGlyph and (anyOtherHighTTD or targetTTD > 4.5) and math.abs(ffTime - bpTime) > 3 then
+    -- 判定 A: 疾病同步 (当前或周围有长寿命单位，且疾病时间差 > 3秒)
+    if (anyOtherHighTTD or targetTTD > 4.5) and math.abs(ffTime - bpTime) > 3 then
         decision = true
         reason = string.format("同步: 疾病时间差过大(FF:%.1fs, BP:%.1fs)", ffTime, bpTime)
 
-    -- 判定 B: 3秒刷新规则 (核心逻辑：任一疾病 < 3s 且有疾病雕文)
-    elseif hasDisGlyph and (ffTime < 3.0 or bpTime < 3.0) then
+    -- 判定 B: 3秒刷新规则 (任一疾病 < 3s)
+    elseif ffTime < 3.0 or bpTime < 3.0 then
         decision = true
         reason = string.format("刷新(3秒规则): 疾病即将到期(FF:%.1fs, BP:%.1fs)", ffTime, bpTime)
 
-    -- 判定 C: 规则 A (15码内有长寿命目标)
+    -- 判定 C: 15码内有长寿命目标且有无病目标 -> 群体扩散
+    elseif anyOtherHighTTD and noDiseaseCount >= 1 then
+        decision = true
+        reason = string.format("扩散: 15码内发现%d个高TTD目标且有%d个无病目标", othersHighTTDCount, noDiseaseCount)
+
+    -- 判定 D: 15码内有长寿命目标但无扩散目标 -> 单体刷新
     elseif anyOtherHighTTD then
-        -- 情况 1: 群体扩散 (传染雕文)
-        if hasPesGlyph and noDiseaseCount > 0 then
-            decision = true
-            reason = string.format("扩散: 15码内发现%d个高TTD目标且有%d个无病目标", othersHighTTDCount, noDiseaseCount)
-        -- 情况 2: 单体刷新 (疾病雕文)
-        elseif hasDisGlyph and ffTime < refreshThreshold and bpTime < refreshThreshold then
+        if ffTime < refreshThreshold or bpTime < refreshThreshold then
             decision = true
             reason = string.format("刷新: 当前目标双病即将到期(FF:%.1fs, BP:%.1fs)", ffTime, bpTime)
         end
 
-    -- 判定 D: 规则 B (仅当前目标高 TTD)
+    -- 判定 E: 仅当前目标高 TTD -> 单体刷新
     elseif targetTTD > 4.5 then
-        if hasDisGlyph and ffTime < refreshThreshold and bpTime < refreshThreshold then
+        if ffTime < refreshThreshold or bpTime < refreshThreshold then
             decision = true
             reason = string.format("纯单体刷新: 仅当前目标高TTD(%.1fs)", targetTTD)
         end
-    end
 
-    -- 判定 D: 双病但其中一个即将到期 (新增条件)
-    if not decision and hasFF and hasBP then
+    -- 判定 F: 双病但其中一个即将到期 (兜底条件)
+    else
         if ffTime < refreshThreshold or bpTime < refreshThreshold then
             decision = true
             reason = string.format("单病刷新: 双病中有一个即将到期(FF:%.1fs, BP:%.1fs)", ffTime, bpTime)
@@ -347,7 +514,6 @@ function Module:ShouldRecommendPestilence()
     if decision then
         self.LastRecommendationTime = now
         if reason ~= self.LastReason or (now - self.LastPrintTime > 1.0) then
-            HekiliHelper:DebugPrint(string.format("|cFF00FF00[DK逻辑]|r %s", reason))
             self.LastReason = reason
             self.LastPrintTime = now
         end
@@ -355,107 +521,13 @@ function Module:ShouldRecommendPestilence()
     end
 
     -- 无决策时重置并检查停留时间
+    local lingerResult = (now - self.LastRecommendationTime < self.RecommendationLinger)
     self.LastReason = ""
-    return (now - self.LastRecommendationTime < self.RecommendationLinger)
+    return lingerResult
 end
 
 -- 插入逻辑
+-- 兼容旧接口（已废弃，使用ForceInsertPestilence替代）
 function Module:InsertDeathKnightSkills()
-    if not Hekili or not Hekili.DisplayPool then return end
-    
-    local shouldShow = self:ShouldRecommendPestilence()
-    
-    for dispName, UI in pairs(Hekili.DisplayPool) do
-        if dispName == "Primary" or dispName == "AOE" then
-            if shouldShow then
-                self:InsertSkillForDisplay(dispName, UI)
-            else
-                if UI.Recommendations then
-                    for i = 1, 4 do
-                        if UI.Recommendations[i] and UI.Recommendations[i].isDeathKnightSkill then
-                            self:RemoveSkillFromQueue(UI.Recommendations, UI, i)
-                        end
-                    end
-                end
-            end
-        end
-    end
-end
-
-function Module:RemoveSkillFromQueue(Queue, UI, slotIndex)
-    local slot = Queue[slotIndex]
-    if slot.originalRecommendation then
-        local original = slot.originalRecommendation
-        for k, v in pairs(slot) do slot[k] = nil end
-        for k, v in pairs(original) do slot[k] = v end
-    else
-        slot.actionName = nil
-        slot.actionID = nil
-        slot.texture = nil
-        slot.isDeathKnightSkill = nil
-    end
-    UI.NewRecommendations = true
-end
-
-function Module:InsertSkillForDisplay(dispName, UI)
-    if not UI or not UI.Recommendations then return end
-    local Queue = UI.Recommendations
-    
-    -- 检查是否已经在位置1且正确
-    if Queue[1] and Queue[1].actionName == "pestilence" and Queue[1].isDeathKnightSkill then
-        return
-    end
-
-    local insertIndex = 1
-    local originalSlot = nil
-    if Queue[insertIndex] and Queue[insertIndex].actionName and not Queue[insertIndex].isDeathKnightSkill then
-        originalSlot = {}
-        for k, v in pairs(Queue[insertIndex]) do originalSlot[k] = v end
-    end
-    
-    local _, _, texture = GetSpellInfo(PESTILENCE_SPELL_ID)
-    Queue[insertIndex] = Queue[insertIndex] or {}
-    local slot = Queue[insertIndex]
-    
-    slot.index = insertIndex
-    slot.actionName = "pestilence"
-    slot.actionID = PESTILENCE_SPELL_ID
-    slot.texture = texture
-    slot.time = 0
-    slot.exact_time = GetTime()
-    slot.delay = 0
-    slot.since = 0
-    slot.display = dispName
-    slot.isDeathKnightSkill = true
-    slot.originalRecommendation = originalSlot
-    
-    -- 清空后续位置以“暂停”队列，确保只显示传染
-    for i = 2, 4 do
-        if Queue[i] then
-            -- 如果已经是DK技能，直接清空；如果是Hekili原始技能，存入originalRecommendation
-            if Queue[i].isDeathKnightSkill then
-                for k, v in pairs(Queue[i]) do Queue[i][k] = nil end
-            elseif Queue[i].actionName and Queue[i].actionName ~= "" then
-                Queue[i].originalRecommendation = {}
-                for k, v in pairs(Queue[i]) do 
-                    Queue[i].originalRecommendation[k] = v
-                    Queue[i][k] = nil
-                end
-            end
-            Queue[i].isDeathKnightSkill = true -- 标记为已处理，防止被重复清空或恢复错误
-        end
-    end
-
-    if not Hekili.Class.abilities["pestilence"] then
-        Hekili.Class.abilities["pestilence"] = {
-            key = "pestilence",
-            name = "传染",
-            texture = texture,
-            id = PESTILENCE_SPELL_ID,
-            cast = 0,
-            gcd = "spell",
-        }
-    end
-    
-    UI.NewRecommendations = true
+    self:ForceInsertPestilence()
 end

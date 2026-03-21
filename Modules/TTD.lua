@@ -33,6 +33,11 @@ local unitData = {}
 
 -- 模块初始化
 function Module:Initialize()
+    -- 防止重复初始化（即使Initialize崩溃也要标记，避免无限重试）
+    if self.initialized == true then
+        return true
+    end
+
     if not self.frame then
         self.frame = CreateFrame("Frame")
         self.frame:SetScript("OnEvent", function(_, event, ...)
@@ -49,13 +54,22 @@ function Module:Initialize()
             end
         end)
     end
-    
-    self.frame:RegisterEvent("UNIT_HEALTH")
-    self.frame:RegisterEvent("UNIT_MAX_HEALTH")
-    self.frame:RegisterEvent("PLAYER_TARGET_CHANGED")
-    self.frame:RegisterEvent("PLAYER_REGEN_ENABLED")
-    
-    HekiliHelper:DebugPrint("|cFF00FF00[TTD]|r 模块已初始化 (高性能版)")
+
+    -- 立即标记为已初始化，防止重复调用时崩溃
+    self.initialized = true
+
+    local ok, err = pcall(function()
+        self.frame:RegisterEvent("UNIT_HEALTH")
+        self.frame:RegisterEvent("UNIT_MAX_HEALTH")
+        self.frame:RegisterEvent("PLAYER_TARGET_CHANGED")
+        self.frame:RegisterEvent("PLAYER_REGEN_ENABLED")
+    end)
+    if not ok then
+        HekiliHelper:DebugPrint(string.format("[TTD] RegisterEvent错误: %s", tostring(err)))
+        self.initialized = false
+        return false
+    end
+
     return true
 end
 

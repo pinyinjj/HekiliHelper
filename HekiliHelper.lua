@@ -34,34 +34,31 @@ function HekiliHelper:CreateDebugWindow()
     frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
     frame:Hide()
 
-    -- 隐藏模板自带的关闭按钮（我们使用自己的关闭按钮来控制调试模式）
-    -- 使用 frame.CloseButton 直接访问模板创建的关闭按钮
-    if frame.CloseButton then
-        frame.CloseButton:Hide()
-    end
-
     -- 设置标题
     frame.TitleText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     frame.TitleText:SetPoint("LEFT", frame.TitleBg, "LEFT", 5, 0)
     frame.TitleText:SetText("HekiliHelper 调试窗口")
-    
+
     -- 创建滚动框架
     local scrollFrame = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
     scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -30)
     scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -30, 50)
-    
-    -- 创建编辑框（用于显示文本）
+
+    -- 创建编辑框（用于显示文本，可复制）
     local editBox = CreateFrame("EditBox", nil, frame)
     editBox:SetMultiLine(true)
     editBox:SetFontObject("ChatFontNormal")
     editBox:SetWidth(scrollFrame:GetWidth() > 0 and scrollFrame:GetWidth() or 560)
     editBox:SetAutoFocus(false)
     editBox:SetTextInsets(5, 5, 5, 5)
+    editBox:SetMaxLetters(0) -- 允许无限字符
+    editBox:EnableMouse(true)
+    editBox:SetHitRectInsets(0, 0, 0, 0) -- 扩大点击区域
     editBox:SetScript("OnEscapePressed", function(self)
         self:ClearFocus()
     end)
     editBox:SetScript("OnEditFocusGained", function(self)
-        -- 允许编辑框获取焦点用于复制文本
+        self:HighlightText()
     end)
     editBox:SetScript("OnTextChanged", function(self)
         scrollFrame:UpdateScrollChildRect()
@@ -73,14 +70,16 @@ function HekiliHelper:CreateDebugWindow()
             scrollFrame:SetScrollOffset(max)
         end
     end)
-    
+
     scrollFrame:SetScrollChild(editBox)
     frame.editBox = editBox
     frame.scrollFrame = scrollFrame
-    
-    -- 创建关闭按钮
-    local closeButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
-    closeButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 2, 2)
+
+    -- 重用模板自带的关闭按钮，修复位置并添加自定义脚本
+    local closeButton = frame.CloseButton
+    closeButton:ClearAllPoints()
+    closeButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 4, 4)
+    closeButton:Show()
     local parent = self -- 保存引用
     closeButton:SetScript("OnClick", function()
         -- 彻底关闭调试模式
@@ -171,6 +170,11 @@ function HekiliHelper:AddDebugMessage(message)
     if self.DebugWindow and self.DebugWindow:IsShown() then
         self:UpdateDebugWindow()
     end
+end
+
+-- 基础打印函数（直接输出到聊天窗口，不依赖debug开关）
+function HekiliHelper:Print(message)
+    DEFAULT_CHAT_FRAME:AddMessage(message)
 end
 
 -- 调试打印函数（只有在DebugEnabled为true时才打印到窗口）
@@ -284,6 +288,20 @@ function HekiliHelper:OnInitialize()
     self:RegisterChatCommand("hekilihelperdebug", "ToggleDebug")
     self:RegisterChatCommand("hhdebugwin", "ShowDebugWindow")
     self:RegisterChatCommand("hhlist", "PrintRecommendationQueue")
+    self:RegisterChatCommand("hhtestpest", function()
+        -- 强制测试，不管职业
+        local _, class = UnitClass("player")
+        self:Print("当前职业: " .. tostring(class))
+        if class ~= "DEATHKNIGHT" then
+            self:Print("|cFFFF0000错误: 你不是死亡骑士，无法使用传染功能！|r")
+            return
+        end
+        if self.DeathKnightSkills and self.DeathKnightSkills.ForceInsertPestilence then
+            self.DeathKnightSkills:ForceInsertPestilence()
+        else
+            self:Print("|cFFFF0000错误: DeathKnightSkills 模块未初始化|r")
+        end
+    end)
     
     -- 创建模块对象（如果模块文件已加载）
     if not self.MeleeTargetIndicator then
@@ -333,13 +351,6 @@ function HekiliHelper:OnInitialize()
         self:DebugPrint("|cFF00FF00[HekiliHelper]|r 创建BlankIcon模块对象")
     else
         self:DebugPrint("|cFF00FF00[HekiliHelper]|r BlankIcon模块对象已存在")
-    end
-
-    if not self.UIModifier then
-        self.UIModifier = {}
-        self:DebugPrint("|cFF00FF00[HekiliHelper]|r 创建UIModifier模块对象")
-    else
-        self:DebugPrint("|cFF00FF00[HekiliHelper]|r UIModifier模块对象已存在")
     end
 end
 
@@ -432,36 +443,59 @@ function HekiliHelper:InitializeModules()
         self:Print("|cFFFF0000[HekiliHelper]|r 错误: Hekili未加载，无法初始化模块")
         return
     end
-    
+
     self:DebugPrint("|cFF00FF00[HekiliHelper]|r 正在开始初始化各功能模块...")
-    
+
     -- 集成选项到Hekili
     self:IntegrateOptions()
-    
-    -- 模块列表
-    local modules = {
-        { name = "TTD", ref = self.TTD },
-        { name = "FeralDruidSkills", ref = self.FeralDruidSkills },
-        { name = "MeleeTargetIndicator", ref = self.MeleeTargetIndicator },
-        { name = "HealingShamanSkills", ref = self.HealingShamanSkills },
-        { name = "HealingPriestSkills", ref = self.HealingPriestSkills },
-        { name = "DeathKnightSkills", ref = self.DeathKnightSkills },
-        { name = "ModeSwitcher", ref = self.ModeSwitcher },
-        { name = "BlankIcon", ref = self.BlankIcon },
-        { name = "UIModifier", ref = self.UIModifier }
-    }
+
+    -- 获取玩家职业
+    local _, playerClass = UnitClass("player")
+
+    -- 根据职业决定加载哪些模块
+    local modules = {}
+
+    -- 通用模块（所有职业都加载）
+    table.insert(modules, { name = "ModeSwitcher", ref = self.ModeSwitcher })
+    table.insert(modules, { name = "BlankIcon", ref = self.BlankIcon })
+
+    -- 猫德模块
+    if playerClass == "DRUID" then
+        table.insert(modules, { name = "FeralDruidSkills", ref = self.FeralDruidSkills })
+    end
+
+    -- 近战目标指示器（所有近战职业）
+    if playerClass == "DRUID" or playerClass == "ROGUE" or playerClass == "WARRIOR"
+        or playerClass == "DEATHKNIGHT" or playerClass == "PALADIN" or playerClass == "SHAMAN" then
+        table.insert(modules, { name = "MeleeTargetIndicator", ref = self.MeleeTargetIndicator })
+    end
+
+    -- 萨满模块
+    if playerClass == "SHAMAN" then
+        table.insert(modules, { name = "HealingShamanSkills", ref = self.HealingShamanSkills })
+    end
+
+    -- 牧师模块
+    if playerClass == "PRIEST" then
+        table.insert(modules, { name = "HealingPriestSkills", ref = self.HealingPriestSkills })
+    end
+
+    -- DK模块（仅DK，TTD作为传染的依赖功能在DeathKnightSkills内按需初始化）
+    if playerClass == "DEATHKNIGHT" then
+        table.insert(modules, { name = "DeathKnightSkills", ref = self.DeathKnightSkills })
+    end
 
     for _, mod in ipairs(modules) do
         if mod.ref then
-            self:DebugPrint(string.format("|cFF00FF00[HekiliHelper]|r 正在初始化模块: %s", mod.name))
+            self:Print(string.format("|cFF00FF00[HekiliHelper]|r 正在初始化模块: %s", mod.name))
             local success, err = pcall(function()
                 if mod.ref.Initialize then
                     mod.ref:Initialize()
                 end
             end)
-            
+
             if success then
-                self:DebugPrint(string.format("|cFF00FF00[HekiliHelper]|r 模块 %s 初始化完成", mod.name))
+                self:Print(string.format("|cFF00FF00[HekiliHelper]|r 模块 %s 初始化完成", mod.name))
             else
                 self:Print(string.format("|cFFFF0000[HekiliHelper]|r 模块 %s 初始化失败: %s", mod.name, err or "未知错误"))
             end
