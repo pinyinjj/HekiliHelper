@@ -29,13 +29,11 @@ local ARMY_OF_THE_DEAD_ID = 42650
 local GLYPH_PESTILENCE_ID = 58647 -- 传染雕文效果ID
 local GLYPH_DISEASE_ID = 58680    -- 疾病雕文效果ID (用户提供的 63334 也是，我们在Check里同时支持)
 
--- 用于防止闪烁的状态变量
-Module.LastRecommendationTime = 0
-Module.LastPrintTime = 0
-Module.LastReason = ""
-Module.RecommendationLinger = 0.5 -- 增加到0.5秒以消除闪烁
+-- 状态变量
 Module.IsActive = false
 Module.ContinuousOverrideActive = false
+Module.CachedShouldShow = false  -- 缓存的shouldShow值，用于稳定判断
+Module.ShowDelayStart = 0  -- 开始显示延迟的时间戳
 
 -- 辅助函数：判断是否为Boss
 function Module:IsBoss()
@@ -173,6 +171,8 @@ function Module:ForceInsertPestilence()
             self:RemovePestilence()
             self.IsActive = false
         end
+        self.CachedShouldShow = false
+        self.ShowDelayStart = 0
         return
     end
 
@@ -192,8 +192,23 @@ function Module:ForceInsertPestilence()
     end
     local Queue = UI.Recommendations
 
+    -- 如果计算结果发生变化，更新缓存
+    if shouldShow ~= self.CachedShouldShow then
+        self.CachedShouldShow = shouldShow
+        -- 当shouldShow变为true时，开始计时延迟
+        if shouldShow then
+            self.ShowDelayStart = GetTime()
+        else
+            self.ShowDelayStart = 0
+        end
+        return  -- 等待下一帧确认，避免单帧波动导致闪烁
+    end
+
+    -- 使用稳定的缓存值进行判断
+    local stableShouldShow = self.CachedShouldShow
+
     -- 如果不应该显示但之前是活跃状态，需要移除
-    if not shouldShow then
+    if not stableShouldShow then
         if self.IsActive then
             -- 恢复原始推荐
             if Queue[1] and Queue[1].originalRecommendation then
@@ -206,12 +221,20 @@ function Module:ForceInsertPestilence()
             UI.NewRecommendations = true
             self.IsActive = false
         end
+        self.ShowDelayStart = 0
         return
     end
 
     -- 如果已经有传染在位置1，也认为是活跃状态
     if Queue[1] and Queue[1].isDeathKnightSkill and Queue[1].actionName == "pestilence" then
         self.IsActive = true
+        self.ShowDelayStart = 0
+        return
+    end
+
+    -- 检查延迟是否完成（0.2秒）
+    local delayPassed = (GetTime() - self.ShowDelayStart) >= 0.2
+    if not delayPassed then
         return
     end
 
@@ -226,7 +249,6 @@ function Module:ForceInsertPestilence()
 
     -- 保存原始队列以便恢复
     local originalQueue = {}
-    -- 只保存用户设置的数量
     for i = 1, numIcons do
         if Queue[i] then
             originalQueue[i] = {}
@@ -237,7 +259,6 @@ function Module:ForceInsertPestilence()
     end
 
     -- 将队列向后移动
-    -- 根据 numIcons 动态处理
     for i = numIcons, 2, -1 do
         Queue[i] = originalQueue[i - 1]
     end
@@ -250,7 +271,7 @@ function Module:ForceInsertPestilence()
     slot.actionID = PESTILENCE_SPELL_ID
     slot.texture = texture
     slot.isDeathKnightSkill = true
-    slot.originalRecommendation = originalQueue[1]  -- 保存原始位置1的内容
+    slot.originalRecommendation = originalQueue[1]
     slot.time = 0
     slot.exact_time = GetTime()
     slot.delay = 0
@@ -270,6 +291,7 @@ function Module:ForceInsertPestilence()
 
     UI.NewRecommendations = true
     self.IsActive = true
+    self.LastShouldShow = shouldShow
 end
 
 -- 移除传染图标
@@ -341,13 +363,13 @@ end
 function Module:IsBloodOrDeathRuneReady()
     local readyCount = 0
     for i = 1, 6 do
-        local start, duration, ready = GetRuneCooldown(i)
+        local _, _, ready = GetRuneCooldown(i)
         local runeType = GetRuneType(i) -- 1: Blood, 2: Unholy, 3: Frost, 4: Death
         if ready and (runeType == 1 or runeType == 4) then
             readyCount = readyCount + 1
         end
     end
-    return readyCount > 0, readyCount
+    return readyCount > 0
 end
 
 -- 检查单位是否患有玩家施放的疾病
@@ -434,96 +456,71 @@ function Module:GetPestilenceTargetInfo(range)
     return noDiseaseCount, othersWithHighTTDCount, anyOtherHighTTD
 end
 
--- 判断逻辑核心 (卫语句优化版)
+-- 判断逻辑核心
 function Module:ShouldRecommendPestilence()
-    -- 1. 基础配置与冷却快速失败
+    -- 1. 基础配置快速失败（不检查冷却，因为图标应该提前显示）
     local db = HekiliHelper.DB.profile
     if not db.deathKnight or not db.deathKnight.enabled then
         return false
     end
 
-    local now = GetTime()
     local TTD = HekiliHelper.TTD
 
     local isKnown = IsSpellKnown(PESTILENCE_SPELL_ID)
-    local start, duration = GetSpellCooldown(PESTILENCE_SPELL_ID)
-    local cdLeft = (start and start > 0) and (start + duration - now) or 0
     local runeReady = self:IsBloodOrDeathRuneReady()
 
-    if not (isKnown and cdLeft <= 1.5 and runeReady) then
-        local lingerResult = (now - self.LastRecommendationTime < self.RecommendationLinger)
-        return lingerResult
+    if not (isKnown and runeReady) then
+        return false
     end
 
     -- 2. 疾病状态与双病检查
     local hasFF, ffTime, hasBP, bpTime = self:GetTargetDiseaseStatus()
     if not (hasFF and hasBP) then
-        local lingerResult = (now - self.LastRecommendationTime < self.RecommendationLinger)
-        return lingerResult
+        return false
     end
 
     -- 3. 环境与TTD数据
-    local noDiseaseCount, othersHighTTDCount, anyOtherHighTTD = self:GetPestilenceTargetInfo(15)
+    local noDiseaseCount, _, anyOtherHighTTD = self:GetPestilenceTargetInfo(15)
     local targetTTD = TTD:GetTTD("target") or 99
 
-    -- 4. 判定核心逻辑 (保持原有逻辑分支，扁平化结构)
+    -- 4. 判定核心逻辑
     local decision = false
-    local reason = ""
     local isBoss = self:IsBoss()
     local armyReady = self:IsArmyReady()
     local refreshThreshold = (isBoss and armyReady) and 5.5 or 3.0
 
-    -- 判定 A: 疾病同步 (当前或周围有长寿命单位，且疾病时间差 > 3秒)
+    -- 判定 A: 疾病同步
     if (anyOtherHighTTD or targetTTD > 4.5) and math.abs(ffTime - bpTime) > 3 then
         decision = true
-        reason = string.format("同步: 疾病时间差过大(FF:%.1fs, BP:%.1fs)", ffTime, bpTime)
 
-    -- 判定 B: 3秒刷新规则 (任一疾病 < 3s)
+    -- 判定 B: 3秒刷新规则
     elseif ffTime < 3.0 or bpTime < 3.0 then
         decision = true
-        reason = string.format("刷新(3秒规则): 疾病即将到期(FF:%.1fs, BP:%.1fs)", ffTime, bpTime)
 
-    -- 判定 C: 15码内有长寿命目标且有无病目标 -> 群体扩散
+    -- 判定 C: 群体扩散
     elseif anyOtherHighTTD and noDiseaseCount >= 1 then
         decision = true
-        reason = string.format("扩散: 15码内发现%d个高TTD目标且有%d个无病目标", othersHighTTDCount, noDiseaseCount)
 
-    -- 判定 D: 15码内有长寿命目标但无扩散目标 -> 单体刷新
+    -- 判定 D: 单体刷新
     elseif anyOtherHighTTD then
         if ffTime < refreshThreshold or bpTime < refreshThreshold then
             decision = true
-            reason = string.format("刷新: 当前目标双病即将到期(FF:%.1fs, BP:%.1fs)", ffTime, bpTime)
         end
 
-    -- 判定 E: 仅当前目标高 TTD -> 单体刷新
+    -- 判定 E: 仅当前目标高TTD
     elseif targetTTD > 4.5 then
         if ffTime < refreshThreshold or bpTime < refreshThreshold then
             decision = true
-            reason = string.format("纯单体刷新: 仅当前目标高TTD(%.1fs)", targetTTD)
         end
 
-    -- 判定 F: 双病但其中一个即将到期 (兜底条件)
+    -- 判定 F: 兜底
     else
         if ffTime < refreshThreshold or bpTime < refreshThreshold then
             decision = true
-            reason = string.format("单病刷新: 双病中有一个即将到期(FF:%.1fs, BP:%.1fs)", ffTime, bpTime)
         end
     end
 
-    -- 5. 推荐确认与状态持久化
-    if decision then
-        self.LastRecommendationTime = now
-        if reason ~= self.LastReason or (now - self.LastPrintTime > 1.0) then
-            self.LastReason = reason
-            self.LastPrintTime = now
-        end
-        return true
-    end
-
-    -- 无决策时重置并检查停留时间
-    local lingerResult = (now - self.LastRecommendationTime < self.RecommendationLinger)
-    self.LastReason = ""
-    return lingerResult
+    return decision
 end
 
 -- 插入逻辑

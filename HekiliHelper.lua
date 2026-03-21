@@ -109,6 +109,20 @@ function HekiliHelper:CreateDebugWindow()
         self.DebugMessages = {}
         editBox:SetText("")
     end)
+
+    -- 创建复制按钮
+    local copyButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    copyButton:SetSize(80, 22)
+    copyButton:SetPoint("LEFT", clearButton, "RIGHT", 10, 0)
+    copyButton:SetText("复制")
+    copyButton:SetScript("OnClick", function()
+        local text = table.concat(self.DebugMessages, "\n")
+        if text and text ~= "" then
+            self:Print("|cFFFFFF00[HekiliHelper]|r 请在调试窗口中按 Ctrl+A 全选，然后 Ctrl+C 复制")
+        else
+            self:Print("|cFFFF0000[HekiliHelper]|r 没有可复制的调试信息")
+        end
+    end)
     
     -- 创建滚动到底部按钮
     local scrollBottomButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
