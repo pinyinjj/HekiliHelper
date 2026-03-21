@@ -41,7 +41,7 @@ function Module:Initialize()
     if not self.frame then
         self.frame = CreateFrame("Frame")
         self.frame:SetScript("OnEvent", function(_, event, ...)
-            if event == "UNIT_HEALTH" or event == "UNIT_MAX_HEALTH" then
+            if event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH" then
                 local unit = ...
                 if unit then
                     self:UpdateUnitData(unit)
@@ -60,7 +60,7 @@ function Module:Initialize()
 
     local ok, err = pcall(function()
         self.frame:RegisterEvent("UNIT_HEALTH")
-        self.frame:RegisterEvent("UNIT_MAX_HEALTH")
+        self.frame:RegisterEvent("UNIT_MAXHEALTH")
         self.frame:RegisterEvent("PLAYER_TARGET_CHANGED")
         self.frame:RegisterEvent("PLAYER_REGEN_ENABLED")
     end)
