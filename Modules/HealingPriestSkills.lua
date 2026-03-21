@@ -24,12 +24,10 @@ local Module = HekiliHelper.HealingPriestSkills
 -- 模块初始化
 function Module:Initialize()
     if not Hekili then 
-        HekiliHelper:Print("|cFFFF0000[HealingPriest]|r 错误: Hekili对象不存在")
         return false 
     end
     
-    HekiliHelper:DebugPrint("|cFF00FF00[HealingPriest]|r 开始初始化...")
-    
+    -- Hook Hekili.Update
     local success = HekiliHelper.HookUtils.Wrap(Hekili, "Update", function(oldFunc, self, ...)
         local result = oldFunc(self, ...)
         C_Timer.After(0.001, function()
@@ -454,7 +452,8 @@ function Module:InsertHealingSkills()
     if not db.enabled or not db.healingPriest or not db.healingPriest.enabled then return end
     
     for dispName, UI in pairs(Hekili.DisplayPool) do
-        if (dispName == "Primary" or dispName == "AOE") and UI and UI.Active and UI.alpha > 0 then
+        local lowerName = dispName:lower()
+        if (lowerName == "primary" or lowerName == "aoe") and UI and UI.Active and UI.alpha > 0 then
             local Queue = UI.Recommendations
             if not Queue then return end
             
@@ -493,7 +492,6 @@ function Module:InsertHealingSkills()
                         slot.action = ability
                         
                         UI.NewRecommendations = true
-                        HekiliHelper:DebugPrint(string.format("|cFF00FFFF[HealingPriest]|r 推荐 %s", skillDef.displayName))
                     end
                 end
             end

@@ -31,59 +31,21 @@ Module.LastShouldShow = false
 -- 模块初始化
 function Module:Initialize()
     if not Hekili then
-        HekiliHelper:Print("|cFFFF0000[MeleeIndicator]|r 错误: Hekili对象不存在")
         return false
     end
     
     if not Hekili.Update then
-        HekiliHelper:Print("|cFFFF0000[MeleeIndicator]|r 错误: Hekili.Update函数不存在")
         return false
     end
     
-    -- 使用HookUtils.Wrap + UI OnUpdate 持续覆盖
+    -- Hook Hekili.Update
     local success = HekiliHelper.HookUtils.Wrap(Hekili, "Update", function(oldFunc, self, ...)
-        -- 调用原函数生成推荐
         local result = oldFunc(self, ...)
-
-        -- 立即执行插入
         Module:ForceInsertMeleeIndicator()
-
-        -- 启动持续覆盖（如果还没启动）
-        if not self.ContinuousOverrideActive then
-            self:StartContinuousOverride()
-        end
-
         return result
     end)
 
-    if success then
-        return true
-    else
-        return false
-    end
-end
-
--- 持续覆盖函数：Hook UI 的 OnUpdate 实现每帧覆盖
-function Module:StartContinuousOverride()
-    local displays = Hekili.DisplayPool
-    if not displays or not displays.Primary then
-        C_Timer.After(0.1, function() Module:StartContinuousOverride() end)
-        return
-    end
-
-    local UI = displays.Primary
-    if self.ContinuousOverrideActive then return end
-    self.ContinuousOverrideActive = true
-
-    -- Hook UI 的 OnUpdate
-    local originalOnUpdate = UI:GetScript("OnUpdate")
-    UI:SetScript("OnUpdate", function(self, elapsed)
-        if originalOnUpdate then
-            originalOnUpdate(self, elapsed)
-        end
-        -- 每帧都执行强制插入
-        Module:ForceInsertMeleeIndicator()
-    end)
+    return success
 end
 
 -- 获取职业图标路径
@@ -181,8 +143,11 @@ end
 -- 获取用户设置的显示图标数量（1-10）
 function Module:GetNumIcons()
     local profile = Hekili.DB and Hekili.DB.profile
-    if profile and profile.displays and profile.displays.Primary then
-        return profile.displays.Primary.numIcons or 3
+    if profile and profile.displays then
+        local display = profile.displays.Primary or profile.displays.primary
+        if display then
+            return display.numIcons or 3
+        end
     end
     return 3  -- 默认值（适配1-10）
 end
@@ -205,10 +170,10 @@ function Module:ForceInsertMeleeIndicator()
     local shouldShow = (not inMelee) and (enemies > 0)
 
     local displays = Hekili.DisplayPool
-    if not displays or not displays.Primary then return end
+    if not displays then return end
 
-    local UI = displays.Primary
-    if not UI.Recommendations then return end
+    local UI = displays.Primary or displays.primary
+    if not UI or not UI.Recommendations then return end
     local Queue = UI.Recommendations
 
     -- 如果不应该显示但之前是活跃状态，需要移除
@@ -275,7 +240,7 @@ function Module:ForceInsertMeleeIndicator()
     slot.time = 0
     slot.exact_time = GetTime()
     slot.delay = 0
-    slot.display = "Primary"
+    slot.display = UI.Name or "Primary"
 
     -- 注册虚拟技能
     if not Hekili.Class.abilities["melee_target_indicator"] then
@@ -312,10 +277,10 @@ function Module:InsertMeleeIndicator()
     local shouldShow = (not inMelee) and (enemies > 0)
 
     local displays = Hekili.DisplayPool
-    if not displays or not displays.Primary then return end
+    if not displays then return end
 
-    local UI = displays.Primary
-    if not UI.Recommendations then return end
+    local UI = displays.Primary or displays.primary
+    if not UI or not UI.Recommendations then return end
     local Queue = UI.Recommendations
 
     -- 停留时间判断：如果条件不再满足，但仍在停留时间内，保持显示
@@ -361,7 +326,7 @@ function Module:InsertMeleeIndicator()
     slot.time = 0
     slot.exact_time = GetTime()
     slot.delay = 0
-    slot.display = "Primary"
+    slot.display = UI.Name or "Primary"
     
     -- 注册虚拟技能，防止报错
     if not Hekili.Class.abilities["melee_target_indicator"] then
@@ -385,11 +350,11 @@ end
 -- 移除逻辑
 function Module:RemoveMeleeIndicator()
     local displays = Hekili.DisplayPool
-    if not displays or not displays.Primary then return end
+    if not displays then return end
 
-    local UI = displays.Primary
+    local UI = displays.Primary or displays.primary
+    if not UI or not UI.Recommendations then return end
     local Queue = UI.Recommendations
-    if not Queue then return end
 
     if Queue[1] and Queue[1].isMeleeIndicator then
         -- 恢复原始推荐

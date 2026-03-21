@@ -28,28 +28,18 @@ local PREDATORY_SWIFTNESS_ID = 69369 -- 掠食者的迅捷 (P2 2pc 相关)
 
 -- 核心逻辑验证函数 (同步/异步逻辑公用)
 function Module:ShouldRecommendRegrowth()
-    -- 0. 打印调试信息
-    local db = HekiliHelper.DB and HekiliHelper.DB.profile
-    -- HekiliHelper:DebugPrint(string.format("|cFF00FF00[FeralDruid]|r 开始检查... db=%s, feralDruid=%s", tostring(db), tostring(db and db.feralDruid)))
-
     -- 1. 检查配置
+    local db = HekiliHelper.DB and HekiliHelper.DB.profile
     if not db then
-        -- HekiliHelper:DebugPrint("|cFFFF0000[FeralDruid]|r DB不存在")
         return false, "DB不存在"
     end
-    if not db.feralDruid then
-        -- 配置不存在时默认为开启
-        -- HekiliHelper:DebugPrint("|cFF00FF00[FeralDruid]|r 配置不存在，默认为开启")
-    elseif db.feralDruid.enabled == false then
-        -- HekiliHelper:DebugPrint("|cFFFF0000[FeralDruid]|r 功能未启用")
+    if not db.feralDruid or db.feralDruid.enabled == false then
         return false, "功能未启用"
     end
-    -- HekiliHelper:DebugPrint("|cFF00FF00[FeralDruid]|r 配置检查通过")
 
     -- 2. 检查法力值
     local currentMana = UnitPower("player", 0)
     if currentMana <= 2500 then
-        -- HekiliHelper:DebugPrint(string.format("|cFFFF0000[FeralDruid]|r 法力值不足: %d", currentMana))
         return false, "法力值不足"
     end
 
@@ -64,10 +54,8 @@ function Module:ShouldRecommendRegrowth()
         end
     end
     if not hasPredatorySwiftness then
-        -- HekiliHelper:DebugPrint("|cFFFF0000[FeralDruid]|r 没有掠食者的迅捷Buff(玩家自身)")
         return false, "没有掠食者的迅捷Buff"
     end
-    -- HekiliHelper:DebugPrint("|cFF00FF00[FeralDruid]|r 有掠食者迅捷Buff(玩家自身)")
 
     -- 4. 检查精灵之火冷却
     local start, duration = GetSpellCooldown(FAERIE_FIRE_FERAL_ID)
@@ -75,12 +63,10 @@ function Module:ShouldRecommendRegrowth()
         start, duration = GetSpellCooldown(FAERIE_FIRE_ID)
     end
     local cdLeft = (start and start > 0) and (start + duration - GetTime()) or 0
-    -- HekiliHelper:DebugPrint(string.format("|cFF00FF00[FeralDruid]|r 精灵火CD: %.2fs", cdLeft))
     if cdLeft <= 1.5 then
         return false, string.format("精灵火CD不足(%.2fs)", cdLeft)
     end
 
-    -- HekiliHelper:DebugPrint(string.format("|cFF00FF00[FeralDruid]|r 全部条件满足! CD:%.2fs, Mana:%d", cdLeft, currentMana))
     return true, string.format("满足(CD:%.2fs, Mana:%d)", cdLeft, currentMana)
 end
 
@@ -91,47 +77,11 @@ function Module:Initialize()
     local _, class = UnitClass("player")
     if class ~= "DRUID" then return true end
 
-    HekiliHelper:DebugPrint("|cFF00FF00[FeralDruid]|r 开始Hook Hekili.Update...")
-    
+    -- Hook Hekili.Update
     local success = HekiliHelper.HookUtils.Wrap(Hekili, "Update", function(oldFunc, self, ...)
-        -- A. 备份阶段：在Hekili重算前记录
-        local savedSkills = {}
-        if Hekili and Hekili.DisplayPool then
-            for dispName, UI in pairs(Hekili.DisplayPool) do
-                if UI and UI.Recommendations and UI.Recommendations[1] and UI.Recommendations[1].isFeralDruidSkill then
-                    savedSkills[dispName] = {}
-                    for k, v in pairs(UI.Recommendations[1]) do savedSkills[dispName][k] = v end
-                end
-            end
-        end
-
-        -- B. 执行原生更新
         local result = oldFunc(self, ...)
         
-        -- C. 同步恢复阶段：立即校验并决定是否恢复
-        if Hekili and Hekili.DisplayPool then
-            local should, reason = Module:ShouldRecommendRegrowth()
-            for dispName, savedSlot in pairs(savedSkills) do
-                local UI = Hekili.DisplayPool[dispName]
-                if UI and UI.Recommendations then
-                    if should then
-                        -- 如果依然满足条件，强行粘回
-                        if not UI.Recommendations[1] or not UI.Recommendations[1].isFeralDruidSkill then
-                            UI.Recommendations[1] = UI.Recommendations[1] or {}
-                            for k, v in pairs(savedSlot) do UI.Recommendations[1][k] = v end
-                            UI.NewRecommendations = true
-                        end
-                    else
-                        -- 如果不再满足条件，确保清除可能残留的愈合
-                        if UI.Recommendations[1] and UI.Recommendations[1].isFeralDruidSkill then
-                            Module:RemoveRegrowth(dispName, UI, "同步校验-" .. reason)
-                        end
-                    end
-                end
-            end
-        end
-
-        -- D. 异步二次检查
+        -- 在 Hekili 计算完后介入
         C_Timer.After(0.001, function()
             Module:ProcessFeralLogic()
         end)
@@ -147,25 +97,20 @@ function Module:ProcessFeralLogic()
     if not Hekili or not Hekili.DisplayPool then return end
 
     local should, reason = self:ShouldRecommendRegrowth()
-    HekiliHelper:DebugPrint(string.format("|cFF00FF00[FeralDruid]|r ProcessFeralLogic: should=%s, reason=%s", tostring(should), reason))
 
     for dispName, UI in pairs(Hekili.DisplayPool) do
-        if (dispName == "Primary" or dispName == "AOE") and UI.Active and UI.alpha > 0 then
+        local lowerName = dispName:lower()
+        if (lowerName == "primary" or lowerName == "aoe") and UI.Active and UI.alpha > 0 then
             local Queue = UI.Recommendations
-            HekiliHelper:DebugPrint(string.format("|cFF00FF00[FeralDruid]|r 检查队列 %s, Queue[1]=%s", dispName, tostring(Queue and Queue[1])))
             if Queue and Queue[1] then
                 local nextAction = Queue[1].actionName or ""
                 local nextActionID = Queue[1].actionID or 0
-                HekiliHelper:DebugPrint(string.format("|cFF00FF00[FeralDruid]|r 当前推荐: actionName=%s, actionID=%d", nextAction, nextActionID))
 
                 if should then
                     -- 检查当前是否推荐精灵之火
                     if nextAction == "faerie_fire_feral" or nextAction == "faerie_fire" or
                        nextActionID == FAERIE_FIRE_FERAL_ID or nextActionID == FAERIE_FIRE_ID then
-                        HekiliHelper:DebugPrint("|cFF00FF00[FeralDruid]|r 满足条件，插入愈合")
                         self:InsertRegrowth(dispName, UI, reason)
-                    else
-                        HekiliHelper:DebugPrint(string.format("|cFFFF0000[FeralDruid]|r 当前不是精灵火，不插入: %s", nextAction))
                     end
                 else
                     -- 不满足条件，如果是愈合则移除
@@ -205,7 +150,6 @@ function Module:InsertRegrowth(dispName, UI, reason)
     end
 
     UI.NewRecommendations = true
-    HekiliHelper:DebugPrint(string.format("|cFF00FF00[FeralDruid]|r 插入愈合: %s", reason))
 end
 
 -- 移除逻辑
@@ -224,5 +168,4 @@ function Module:RemoveRegrowth(dispName, UI, reason)
     end
     
     UI.NewRecommendations = true
-    HekiliHelper:DebugPrint(string.format("|cFFFF0000[FeralDruid]|r 移除愈合: %s", reason))
 end

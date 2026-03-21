@@ -180,9 +180,15 @@ function HekiliHelper:AddDebugMessage(message)
         table.remove(self.DebugMessages, 1)
     end
     
-    -- 如果调试窗口已创建且显示中，更新内容
+    -- 如果调试窗口已创建且显示中，更新内容（节流处理）
     if self.DebugWindow and self.DebugWindow:IsShown() then
-        self:UpdateDebugWindow()
+        if not self.DebugUpdateTimer then
+            self.DebugUpdateTimer = true
+            C_Timer.After(0.1, function()
+                self:UpdateDebugWindow()
+                self.DebugUpdateTimer = false
+            end)
+        end
     end
 end
 
@@ -247,9 +253,6 @@ function HekiliHelper:OnInitialize()
             meleeIndicator = {
                 enabled = false,
                 checkRange = 5,
-            },
-            ttd = {
-                enabled = true,
             },
             healingShaman = {
                 enabled = true,
@@ -324,14 +327,7 @@ function HekiliHelper:OnInitialize()
     else
         self:DebugPrint("|cFF00FF00[HekiliHelper]|r MeleeTargetIndicator模块对象已存在")
     end
-    
-    if not self.TTD then
-        self.TTD = {}
-        self:DebugPrint("|cFF00FF00[HekiliHelper]|r 创建TTD模块对象")
-    else
-        self:DebugPrint("|cFF00FF00[HekiliHelper]|r TTD模块对象已存在")
-    end
-    
+
     if not self.HealingShamanSkills then
         self.HealingShamanSkills = {}
         self:DebugPrint("|cFF00FF00[HekiliHelper]|r 创建HealingShamanSkills模块对象")
@@ -516,14 +512,12 @@ function HekiliHelper:InitializeModules()
         end
     end
             
-    -- Hook Hekili.Update 来自动打印队列（仅在调试模式开启时）
-    HekiliHelper.HookUtils.Hook(Hekili, "Update", function()
+    -- 定时打印队列（代替 Hekili.Update Hook，避免高频创建 Timer）
+    C_Timer.NewTicker(0.5, function()
         if self.DebugEnabled then
-            C_Timer.After(0.02, function()
-                self:PrintRecommendationQueue()
-            end)
+            self:PrintRecommendationQueue()
         end
-    end, "after")
+    end)
 end
 
 -- 打印当前推荐队列（调试用）

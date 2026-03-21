@@ -16,43 +16,10 @@ local Module = HekiliHelper.HealingShamanSkills
 function Module:Initialize()
     if not Hekili or not Hekili.Update then return false end
     
-    HekiliHelper:DebugPrint("|cFF00FF00[HealingShaman]|r 开始Hook Hekili.Update...")
-    
+    -- Hook Hekili.Update
     local success = HekiliHelper.HookUtils.Wrap(Hekili, "Update", function(oldFunc, self, ...)
-        local savedSkills = {}
-        if Hekili and Hekili.DisplayPool then
-            for dispName, UI in pairs(Hekili.DisplayPool) do
-                if UI and UI.Recommendations then
-                    local Queue = UI.Recommendations
-                    savedSkills[dispName] = {}
-                    for i = 1, 4 do
-                        if Queue[i] and Queue[i].isHealingShamanSkill then
-                            savedSkills[dispName][i] = {}
-                            for k, v in pairs(Queue[i]) do savedSkills[dispName][i][k] = v end
-                        end
-                    end
-                end
-            end
-        end
-        
         local result = oldFunc(self, ...)
-        
         C_Timer.After(0.001, function()
-            if Hekili and Hekili.DisplayPool then
-                for dispName, saved in pairs(savedSkills) do
-                    local UI = Hekili.DisplayPool[dispName]
-                    if UI and UI.Recommendations then
-                        local Queue = UI.Recommendations
-                        for i, savedSlot in pairs(saved) do
-                            if not Queue[i] or not Queue[i].isHealingShamanSkill then
-                                Queue[i] = {}
-                                for k, v in pairs(savedSlot) do Queue[i][k] = v end
-                                UI.NewRecommendations = true
-                            end
-                        end
-                    end
-                end
-            end
             Module:InsertHealingSkills()
         end)
         return result
@@ -179,7 +146,8 @@ end
 function Module:InsertHealingSkills()
     if not Hekili or not Hekili.DisplayPool then return end
     for dispName, UI in pairs(Hekili.DisplayPool) do
-        if (dispName == "Primary" or dispName == "AOE") and UI.Active and UI.alpha > 0 then
+        local lowerName = dispName:lower()
+        if (lowerName == "primary" or lowerName == "aoe") and UI.Active and UI.alpha > 0 then
             local Queue = UI.Recommendations
             if not Queue then return end
             for _, skillDef in ipairs(self.SkillDefinitions) do

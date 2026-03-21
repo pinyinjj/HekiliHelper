@@ -36,7 +36,6 @@ local function HookSetAlpha(frame)
     end
     
     frame.HekiliHelperHooked = true
-    HekiliHelper:DebugPrint(string.format("|cFF00FF00[BlankIcon]|r 已 Hook 窗体 %s 的 SetAlpha", frame:GetName() or "Unknown"))
 end
 
 -- 模块初始化
@@ -44,8 +43,6 @@ function Module:Initialize()
     if not Hekili then
         return false
     end
-    
-    HekiliHelper:DebugPrint("|cFF00FF00[BlankIcon]|r 开始初始化...")
     
     -- Hook Hekili.Update函数
     local success = HekiliHelper.HookUtils.Wrap(Hekili, "Update", function(oldFunc, self, ...)
@@ -59,11 +56,7 @@ function Module:Initialize()
         return result
     end)
     
-    if success then
-        HekiliHelper:DebugPrint("|cFF00FF00[BlankIcon]|r 模块已初始化")
-        return true
-    end
-    return false
+    return success
 end
 
 -- 插入空白图标
@@ -73,8 +66,9 @@ function Module:InsertBlankIcon()
     local displays = Hekili.DisplayPool
     
     for dispName, UI in pairs(displays) do
+        local lowerName = dispName:lower()
         -- 只处理 Primary 和 AOE 显示
-        if (dispName == "Primary" or dispName == "AOE") and UI then
+        if (lowerName == "primary" or lowerName == "aoe") and UI then
             -- 1. 确保 Hook 了 SetAlpha
             HookSetAlpha(UI)
             
@@ -109,7 +103,6 @@ function Module:ProcessDisplay(dispName, UI)
         if #blankIconsFound > 0 then
             for _, index in ipairs(blankIconsFound) do
                 Queue[index] = nil
-                HekiliHelper:DebugPrint(string.format("|cFF00FFFF[BlankIcon]|r 发现真实推荐，移除 %s 位置 %d 的空白图标", dispName, index))
             end
             UI.NewRecommendations = true
         end
@@ -117,8 +110,6 @@ function Module:ProcessDisplay(dispName, UI)
         -- 没有任何真实推荐
         -- 如果队列中还没有空白图标，则在位置1插入一个
         if #blankIconsFound == 0 then
-            -- HekiliHelper:DebugPrint(string.format("|cFF00FFFF[BlankIcon]|r 队列为空，插入空白图标到 %s", dispName))
-            
             -- 确保位置1被占用
             Queue[1] = Queue[1] or {}
             local slot = Queue[1]
