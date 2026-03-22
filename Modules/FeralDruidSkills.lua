@@ -35,6 +35,24 @@ Module.LastDiagnosticTime = 0
 
 -- ===== 辅助判定函数 =====
 
+function Module:GetSpellCooldown(spellID)
+    local start, duration, enabled
+    if C_Spell and C_Spell.GetSpellCooldown then
+        local cdInfo = C_Spell.GetSpellCooldown(spellID)
+        if cdInfo then
+            start = cdInfo.startTime
+            duration = cdInfo.duration
+            enabled = cdInfo.isEnabled
+        end
+    else
+        start, duration, enabled = GetSpellCooldown(spellID)
+    end
+    
+    if not start or start == 0 or (enabled == 0) then return 0 end
+    local remaining = (start + duration) - GetTime()
+    return remaining > 0 and remaining or 0
+end
+
 function Module:HasPredatorySwiftness()
     for i = 1, 40 do
         local name, _, _, _, _, _, unitCaster, _, _, spellId = UnitBuff("player", i)
@@ -185,7 +203,12 @@ function Module:CheckConditions()
     end
 
     if ffRecommended then
-        return true, "检测到推荐精灵火且拥有迅捷Buff", nil
+        -- 检查精灵火冷却时间 (方案 B: 附加条件)
+        local cd = self:GetSpellCooldown(FAERIE_FIRE_FERAL_ID)
+        if cd <= 2 then
+            return false, nil, string.format("推荐了精灵火但冷却不足2秒 (当前: %.1fs)", cd)
+        end
+        return true, "检测到推荐精灵火、有迅捷Buff且精灵火冷却 > 2s", nil
     end
 
     return false, nil, "当前推荐非精灵火 ("..currentRec..")"
