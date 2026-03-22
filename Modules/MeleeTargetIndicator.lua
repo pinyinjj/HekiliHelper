@@ -1,9 +1,8 @@
 -- Modules/MeleeTargetIndicator.lua
 -- 近战目标指示器模块
--- 在优先级队列中插入近战目标指示图标
--- 当玩家身边近战范围内（5码）存在敌方存活单位，但玩家没有目标或目标超出近战范围时显示
+-- 采用“UI覆盖逻辑”：在 Hekili 主图标上叠加职业图标，不修改原生队列，彻底解决闪烁。
+-- 触发条件：玩家身边5码内有敌人，但玩家没有目标或未处于近战攻击状态。
 
--- 获取HekiliHelper对象
 local HekiliHelper = _G.HekiliHelper
 
 if not HekiliHelper then
@@ -16,44 +15,23 @@ if not HekiliHelper then
     return
 end
 
--- 创建模块对象
 if not HekiliHelper.MeleeTargetIndicator then
     HekiliHelper.MeleeTargetIndicator = {}
 end
 
 local Module = HekiliHelper.MeleeTargetIndicator
 
--- 停留时间配置 (1秒，防止闪烁)
-Module.RecommendationLinger = 0.8
-Module.LastRecommendationTime = 0
-Module.LastShouldShow = false
+-- 状态变量
+Module.IsActive = false
+Module.OverlayFrame = nil
+Module.LastReason = nil
+Module.LastDiagnosticTime = 0
 
--- 模块初始化
-function Module:Initialize()
-    if not Hekili then
-        return false
-    end
-    
-    if not Hekili.Update then
-        return false
-    end
-    
-    -- Hook Hekili.Update
-    local success = HekiliHelper.HookUtils.Wrap(Hekili, "Update", function(oldFunc, self, ...)
-        local result = oldFunc(self, ...)
-        Module:ForceInsertMeleeIndicator()
-        return result
-    end)
+-- ===== 辅助判定函数 =====
 
-    return success
-end
-
--- 获取职业图标路径
 function Module:GetClassIconPath()
     local _, class = UnitClass("player")
     if not class then return nil end
-    
-    -- 职业图标映射
     local classIcons = {
         DEATHKNIGHT = "Interface\\AddOns\\Hekili\\Textures\\DEATHKNIGHT.blp",
         DRUID = "Interface\\AddOns\\Hekili\\Textures\\DRUID.blp",
@@ -66,306 +44,171 @@ function Module:GetClassIconPath()
         WARLOCK = "Interface\\AddOns\\Hekili\\Textures\\WARLOCK.blp",
         WARRIOR = "Interface\\AddOns\\Hekili\\Textures\\WARRIOR.blp",
     }
-    
     return classIcons[class]
 end
 
--- 检查玩家是否在近战攻击中
 function Module:IsInMeleeCombat()
-    -- 检查是否在自动攻击（SpellID: 6603 是自动攻击）
     if IsCurrentSpell(6603) then return true end
-    
-    -- 检查施法和引导
     if UnitCastingInfo("player") or UnitChannelInfo("player") then return true end
-    
-    -- 检查Hekili状态系统
     if Hekili.State and Hekili.State.buff and Hekili.State.buff.casting and Hekili.State.buff.casting.up then
         return true
     end
-    
     return false
 end
 
--- 计算近战范围内敌人数量
 function Module:CountEnemiesInMeleeRange()
     local RC = LibStub("LibRangeCheck-2.0")
     if not RC then return 0 end
-    
     local count = 0
-    local checkedGUIDs = {}
+    local checked = {}
     
-    -- 检查目标
-    if UnitExists("target") and not UnitIsDead("target") and UnitCanAttack("player", "target") then
-        local minRange, maxRange = RC:GetRange("target")
-        if maxRange and maxRange <= 5 then
-            count = count + 1
-            checkedGUIDs[UnitGUID("target")] = true
-        end
-    end
+    local units = {"target", "focus", "mouseover"}
+    for i = 1, 40 do table.insert(units, "nameplate"..i) end
     
-    -- 检查姓名板（这是最实用的逻辑）
-    if Hekili.npGUIDs then
-        for unit, _ in pairs(Hekili.npGUIDs) do
-            if unit and UnitExists(unit) and not UnitIsDead(unit) and UnitCanAttack("player", unit) then
-                local guid = UnitGUID(unit)
-                if guid and not checkedGUIDs[guid] then
-                    local minRange, maxRange = RC:GetRange(unit)
-                    if maxRange and maxRange <= 5 then
-                        count = count + 1
-                        checkedGUIDs[guid] = true
-                    end
+    for _, unit in ipairs(units) do
+        if UnitExists(unit) and not UnitIsDead(unit) and UnitCanAttack("player", unit) then
+            local guid = UnitGUID(unit)
+            if guid and not checked[guid] then
+                checked[guid] = true
+                local _, maxRange = RC:GetRange(unit)
+                if (not maxRange) or (maxRange <= 5) then
+                    count = count + 1
                 end
             end
         end
     end
-    
     return count
 end
 
--- 打印详细调试信息
-function Module:PrintDetailedDebug()
-    if not HekiliHelper.DebugEnabled then return end
-    
-    local inMelee = self:IsInMeleeCombat()
-    local enemies = self:CountEnemiesInMeleeRange()
-    local hasTarget = UnitExists("target")
-    local db = (HekiliHelper.DB and HekiliHelper.DB.profile and HekiliHelper.DB.profile.meleeIndicator)
-    local enabled = db and db.enabled
-    
-    HekiliHelper:DebugPrint(string.format("|cFFFFFF00[近战指示器]|r 开关:%s 正在近战:%s 5码敌人:%d 目标存在:%s",
-        enabled and "开" or "关",
-        inMelee and "是" or "否",
-        enemies,
-        hasTarget and "是" or "否"
-    ))
+-- ===== UI 覆盖层实现 =====
+
+function Module:GetHekiliPrimaryButton()
+    if not Hekili or not Hekili.DisplayPool then return nil end
+    local displays = Hekili.DisplayPool
+    local UI = displays.Primary or displays.primary
+    if UI and UI.Buttons and UI.Buttons[1] then return UI.Buttons[1] end
+    for _, disp in pairs(displays) do
+        if type(disp) == "table" and disp.Buttons and disp.Buttons[1] then return disp.Buttons[1] end
+    end
+    return _G["HekiliDisplayPrimary"] and _G["HekiliDisplayPrimary"].Buttons and _G["HekiliDisplayPrimary"].Buttons[1]
 end
 
--- 获取用户设置的显示图标数量（1-10）
-function Module:GetNumIcons()
-    local profile = Hekili.DB and Hekili.DB.profile
-    if profile and profile.displays then
-        local display = profile.displays.Primary or profile.displays.primary
-        if display then
-            return display.numIcons or 3
+function Module:CreateOverlay()
+    if self.OverlayFrame then return self.OverlayFrame end
+    local parent = self:GetHekiliPrimaryButton()
+    if not parent then return nil end
+
+    local size = 50
+    if Hekili and Hekili.DB and Hekili.DB.profile and Hekili.DB.profile.displays then
+        for _, cfg in pairs(Hekili.DB.profile.displays) do
+            if cfg.primaryIconSize or cfg.buttonSize then
+                size = cfg.primaryIconSize or cfg.buttonSize
+                break
+            end
         end
     end
-    return 3  -- 默认值（适配1-10）
+
+    local f = CreateFrame("Frame", "HekiliHelperMeleeOverlay", parent)
+    f:SetSize(size, size)
+    f:SetPoint("CENTER", parent, "CENTER")
+    f:SetFrameLevel(parent:GetFrameLevel() + 100)
+    
+    f.texture = f:CreateTexture(nil, "OVERLAY")
+    f.texture:SetAllPoints(f)
+    f.texture:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    
+    f.texture:SetTexture(self:GetClassIconPath())
+
+    -- 发光效果 (蓝色区分于传染的绿色)
+    f.glow = f:CreateTexture(nil, "BACKGROUND")
+    f.glow:SetPoint("TOPLEFT", f, "TOPLEFT", -1, 1)
+    f.glow:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 1, -1)
+    f.glow:SetColorTexture(0, 0.6, 1, 0.5)
+
+    f:Hide()
+    self.OverlayFrame = f
+    return f
 end
 
--- 强制插入逻辑（用于每个Update周期后强制覆盖队列）
-function Module:ForceInsertMeleeIndicator()
-    -- 检查开关
+function Module:Initialize()
+    HekiliHelper:DebugPrint("[Melee] ===== Initialize (Overlay模式) 开始 =====")
+    
+    if not Hekili or not Hekili.Update then
+        C_Timer.After(1.0, function() Module:Initialize() end)
+        return false
+    end
+
+    local success = HekiliHelper.HookUtils.Wrap(Hekili, "Update", function(oldFunc, self, ...)
+        local result = oldFunc(self, ...)
+        Module:ProcessMeleeOverlay()
+        return result
+    end)
+
+    if success then
+        HekiliHelper:DebugPrint("[Melee] ===== Hook成功，覆盖模式已激活 =====")
+    end
+    return success
+end
+
+function Module:ProcessMeleeOverlay()
+    -- 检查模块开关
     local db = HekiliHelper.DB and HekiliHelper.DB.profile and HekiliHelper.DB.profile.meleeIndicator
     if not db or not db.enabled then
         if self.IsActive then
-            self:RemoveMeleeIndicator()
+            if self.OverlayFrame then self.OverlayFrame:Hide() end
             self.IsActive = false
         end
         return
     end
 
-    -- 检查是否应该显示
-    local inMelee = self:IsInMeleeCombat()
-    local enemies = self:CountEnemiesInMeleeRange()
-    local shouldShow = (not inMelee) and (enemies > 0)
+    local shouldShow, reason, diagnostics = self:ShouldShowIndicator()
+    local overlay = self:CreateOverlay()
+    
+    if shouldShow then
+        if not overlay then return end
 
-    local displays = Hekili.DisplayPool
-    if not displays then return end
+        if not self.IsActive then
+            self.LastReason = reason
+            HekiliHelper:DebugPrint(string.format("|cFF00CCFF[Melee] 开始渲染指示:|r %s", reason or "未知"))
+            self.IsActive = true
+        end
+        
+        overlay:Show()
+        local parent = overlay:GetParent()
+        if parent then
+            if not parent:IsShown() then parent:Show() end
+            if parent:GetAlpha() < 0.1 then parent:SetAlpha(1) end
+        end
+    else
+        -- 诊断日志
+        if HekiliHelper.DebugEnabled and (GetTime() - self.LastDiagnosticTime > 5) then
+            HekiliHelper:DebugPrint(string.format("|cFF999999[Melee] 运行中未触发:|r %s", diagnostics or "检查中"))
+            self.LastDiagnosticTime = GetTime()
+        end
 
-    local UI = displays.Primary or displays.primary
-    if not UI or not UI.Recommendations then return end
-    local Queue = UI.Recommendations
-
-    -- 如果不应该显示但之前是活跃状态，需要移除
-    if not shouldShow then
         if self.IsActive then
-            -- 恢复原始推荐
-            if Queue[1] and Queue[1].originalRecommendation then
-                local original = Queue[1].originalRecommendation
-                for k, v in pairs(Queue[1]) do Queue[1][k] = nil end
-                for k, v in pairs(original) do Queue[1][k] = v end
-            else
-                Queue[1] = nil
-            end
-            UI.NewRecommendations = true
+            if self.OverlayFrame then self.OverlayFrame:Hide() end
+            HekiliHelper:DebugPrint(string.format("|cFFCC3333[Melee] 停止渲染指示:|r (触发原因: %s)", self.LastReason or "判定失效"))
             self.IsActive = false
-        end
-        return
-    end
-
-    -- 如果已经有指示器在位置1，也认为是活跃状态
-    if Queue[1] and Queue[1].isMeleeIndicator then
-        self.IsActive = true
-        return
-    end
-
-    -- 准备插入图标
-    local classIcon = self:GetClassIconPath()
-    if not classIcon then return end
-
-    -- 准备插入图标
-    local classIcon = self:GetClassIconPath()
-    if not classIcon then return end
-
-    -- 动态获取用户设置的显示数量
-    local numIcons = self:GetNumIcons()
-
-    -- 方案：将原队列向后移动，保持原推荐不丢失
-    -- 保存原始队列以便恢复
-    local originalQueue = {}
-    -- 只保存用户设置的数量
-    for i = 1, numIcons do
-        if Queue[i] then
-            originalQueue[i] = {}
-            for k, v in pairs(Queue[i]) do
-                originalQueue[i][k] = v
-            end
+            self.LastReason = nil
         end
     end
-
-    -- 将队列向后移动
-    -- 根据 numIcons 动态处理
-    for i = numIcons, 2, -1 do
-        Queue[i] = originalQueue[i - 1]
-    end
-
-    -- 在位置1插入近战指示器
-    Queue[1] = {}
-    local slot = Queue[1]
-    slot.index = 1
-    slot.actionName = "melee_target_indicator"
-    slot.texture = classIcon
-    slot.isMeleeIndicator = true
-    slot.originalRecommendation = originalQueue[1]  -- 保存原始位置1的内容
-    slot.time = 0
-    slot.exact_time = GetTime()
-    slot.delay = 0
-    slot.display = UI.Name or "Primary"
-
-    -- 注册虚拟技能
-    if not Hekili.Class.abilities["melee_target_indicator"] then
-        Hekili.Class.abilities["melee_target_indicator"] = {
-            key = "melee_target_indicator",
-            name = "近战目标",
-            texture = classIcon,
-            id = 0,
-            cast = 0,
-            gcd = "off",
-        }
-    end
-
-    UI.NewRecommendations = true
-    self.IsActive = true
 end
 
--- 插入逻辑（带停留时间，用于备用）
-function Module:InsertMeleeIndicator()
-    local now = GetTime()
-
-    -- 检查开关
-    local db = HekiliHelper.DB and HekiliHelper.DB.profile and HekiliHelper.DB.profile.meleeIndicator
-    if not db or not db.enabled then
-        self:RemoveMeleeIndicator()
-        self.LastShouldShow = false
-        self.LastRecommendationTime = now
-        return
-    end
-
-    -- 检查是否需要显示
-    local inMelee = self:IsInMeleeCombat()
+function Module:ShouldShowIndicator()
     local enemies = self:CountEnemiesInMeleeRange()
-    local shouldShow = (not inMelee) and (enemies > 0)
-
-    local displays = Hekili.DisplayPool
-    if not displays then return end
-
-    local UI = displays.Primary or displays.primary
-    if not UI or not UI.Recommendations then return end
-    local Queue = UI.Recommendations
-
-    -- 停留时间判断：如果条件不再满足，但仍在停留时间内，保持显示
-    if not shouldShow then
-        local lingerExpired = (now - self.LastRecommendationTime) >= self.RecommendationLinger
-
-        -- 如果指示器存在且停留时间已过，移除
-        if Queue[1] and Queue[1].isMeleeIndicator and lingerExpired then
-            self:RemoveMeleeIndicator()
-            self.LastShouldShow = false
-        end
-        -- 更新状态，但不立即移除
-        self.LastShouldShow = shouldShow
-        return
-    end
-
-    -- 如果已经有指示器且在位置1，更新时间戳并返回
-    if Queue[1] and Queue[1].isMeleeIndicator then
-        self.LastRecommendationTime = now
-        self.LastShouldShow = shouldShow
-        return
-    end
-
-    -- 准备插入图标
-    local classIcon = self:GetClassIconPath()
-    if not classIcon then return end
-
-    -- 保存原位1的推荐内容
-    local originalSlot = nil
-    if Queue[1] and not Queue[1].isMeleeIndicator then
-        originalSlot = {}
-        for k, v in pairs(Queue[1]) do originalSlot[k] = v end
-    end
+    local inMelee = self:IsInMeleeCombat()
     
-    -- 插入到位置1
-    Queue[1] = Queue[1] or {}
-    local slot = Queue[1]
-    slot.index = 1
-    slot.actionName = "melee_target_indicator"
-    slot.texture = classIcon
-    slot.isMeleeIndicator = true
-    slot.originalRecommendation = originalSlot
-    slot.time = 0
-    slot.exact_time = GetTime()
-    slot.delay = 0
-    slot.display = UI.Name or "Primary"
-    
-    -- 注册虚拟技能，防止报错
-    if not Hekili.Class.abilities["melee_target_indicator"] then
-        Hekili.Class.abilities["melee_target_indicator"] = {
-            key = "melee_target_indicator",
-            name = "近战目标",
-            texture = classIcon,
-            id = 0,
-            cast = 0,
-            gcd = "off",
-        }
-    end
-    
-    UI.NewRecommendations = true
+    local diag = string.format("5码敌人=%d 正在近战=%s", enemies, tostring(inMelee))
 
-    -- 更新状态
-    self.LastRecommendationTime = GetTime()
-    self.LastShouldShow = true
+    if enemies > 0 and not inMelee then
+        return true, string.format("发现%d个近战敌人且未处于战斗状态", enemies)
+    end
+
+    return false, nil, diag
 end
 
--- 移除逻辑
-function Module:RemoveMeleeIndicator()
-    local displays = Hekili.DisplayPool
-    if not displays then return end
-
-    local UI = displays.Primary or displays.primary
-    if not UI or not UI.Recommendations then return end
-    local Queue = UI.Recommendations
-
-    if Queue[1] and Queue[1].isMeleeIndicator then
-        -- 恢复原始推荐
-        if Queue[1].originalRecommendation then
-            local original = Queue[1].originalRecommendation
-            for k, v in pairs(Queue[1]) do Queue[1][k] = nil end
-            for k, v in pairs(original) do Queue[1][k] = v end
-        else
-            Queue[1] = nil
-        end
-
-        UI.NewRecommendations = true
-    end
-end
+-- 兼容性占位
+function Module:ForceInsertMeleeIndicator() end
+function Module:InsertMeleeIndicator() end
+function Module:RemoveMeleeIndicator() end
