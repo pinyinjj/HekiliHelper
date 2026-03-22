@@ -32,6 +32,8 @@ local GLYPH_DISEASE_ID = 58680
 Module.IsActive = false
 Module.TTDInitialized = false
 Module.OverlayFrame = nil
+Module.LastReason = nil
+Module.LastDiagnosticTime = 0 -- 诊断日志节流
 
 -- ===== TTD 内置实现 =====
 local ttdUnitData = {}
@@ -94,8 +96,8 @@ end
 function Module:GetTargetDiseaseStatus()
     local hasFF, ffTime, hasBP, bpTime = false, 0, false, 0
     for i = 1, 40 do
-        local _, _, _, _, _, expirationTime, unitCaster, _, _, spellId = UnitDebuff("target", i)
-        if not spellId then break end
+        local name, _, _, _, _, expirationTime, unitCaster, _, _, spellId = UnitDebuff("target", i)
+        if not name then break end -- 修复：使用 name 判定循环结束
         if unitCaster == "player" then
             local timeLeft = expirationTime > 0 and (expirationTime - GetTime()) or 99
             if spellId == FROST_FEVER_ID then hasFF, ffTime = true, timeLeft
@@ -108,8 +110,8 @@ end
 function Module:UnitHasMyDiseases(unit)
     local hasFF, hasBP = false, false
     for i = 1, 40 do
-        local _, _, _, _, _, _, unitCaster, _, _, spellId = UnitDebuff(unit, i)
-        if not spellId then break end
+        local name, _, _, _, _, _, unitCaster, _, _, spellId = UnitDebuff(unit, i)
+        if not name then break end
         if unitCaster == "player" then
             if spellId == FROST_FEVER_ID then hasFF = true
             elseif spellId == BLOOD_PLAGUE_ID then hasBP = true end
@@ -129,25 +131,57 @@ end
 
 -- ===== UI 覆盖层实现 =====
 
+function Module:GetHekiliPrimaryButton()
+    if not Hekili or not Hekili.DisplayPool then return nil end
+    local displays = Hekili.DisplayPool
+    
+    -- 1. 优先尝试 Primary
+    local UI = displays.Primary or displays.primary
+    if UI and UI.Buttons and UI.Buttons[1] then return UI.Buttons[1] end
+    
+    -- 2. 遍历所有显示寻找第一个有效的
+    for _, disp in pairs(displays) do
+        if type(disp) == "table" and disp.Buttons and disp.Buttons[1] then
+            return disp.Buttons[1]
+        end
+    end
+    
+    return _G["HekiliDisplayPrimary"] and _G["HekiliDisplayPrimary"].Buttons and _G["HekiliDisplayPrimary"].Buttons[1]
+end
+
 function Module:CreateOverlay()
     if self.OverlayFrame then return self.OverlayFrame end
-    local parent = _G["HekiliDisplayPrimary"] and _G["HekiliDisplayPrimary"].Buttons and _G["HekiliDisplayPrimary"].Buttons[1]
+    
+    local parent = self:GetHekiliPrimaryButton()
     if not parent then return nil end
 
+    local size = 50
+    if Hekili and Hekili.DB and Hekili.DB.profile and Hekili.DB.profile.displays then
+        -- 尝试从配置中获取第一个显示的大小
+        for _, cfg in pairs(Hekili.DB.profile.displays) do
+            if cfg.primaryIconSize or cfg.buttonSize then
+                size = cfg.primaryIconSize or cfg.buttonSize
+                break
+            end
+        end
+    end
+
     local f = CreateFrame("Frame", "HekiliHelperPestilenceOverlay", parent)
-    f:SetAllPoints(parent)
-    f:SetFrameLevel(parent:GetFrameLevel() + 50)
+    f:SetSize(size, size)
+    f:SetPoint("CENTER", parent, "CENTER")
+    f:SetFrameLevel(parent:GetFrameLevel() + 100)
+    
     f.texture = f:CreateTexture(nil, "OVERLAY")
     f.texture:SetAllPoints(f)
+    f.texture:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     
     local icon = C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(PESTILENCE_SPELL_ID) or select(3, GetSpellInfo(PESTILENCE_SPELL_ID))
     f.texture:SetTexture(icon)
 
-    -- 发光效果
     f.glow = f:CreateTexture(nil, "BACKGROUND")
-    f.glow:SetPoint("TOPLEFT", f, "TOPLEFT", -3, 3)
-    f.glow:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 3, 3)
-    f.glow:SetColorTexture(0, 1, 0, 0.4)
+    f.glow:SetPoint("TOPLEFT", f, "TOPLEFT", -1, 1)
+    f.glow:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 1, -1)
+    f.glow:SetColorTexture(0, 1, 0, 0.5)
 
     f:Hide()
     self.OverlayFrame = f
@@ -155,79 +189,86 @@ function Module:CreateOverlay()
 end
 
 function Module:Initialize()
-    HekiliHelper:DebugPrint("[DK] ===== Initialize (Overlay模式) =====")
+    HekiliHelper:DebugPrint("[DK] ===== Initialize (Overlay模式) 开始 =====")
+    
+    if not Hekili or not Hekili.Update then
+        C_Timer.After(1.0, function() Module:Initialize() end)
+        return false
+    end
+
     local _, class = UnitClass("player")
     if class ~= "DEATHKNIGHT" then return true end
 
-    HekiliHelper.HookUtils.Wrap(Hekili, "Update", function(oldFunc, self, ...)
+    local success = HekiliHelper.HookUtils.Wrap(Hekili, "Update", function(oldFunc, self, ...)
         local result = oldFunc(self, ...)
         Module:ProcessPestilenceOverlay()
         return result
     end)
-    return true
+
+    if success then
+        HekiliHelper:DebugPrint("[DK] ===== Hook成功，覆盖模式已激活 =====")
+    end
+    
+    return success
 end
 
 function Module:ProcessPestilenceOverlay()
     self:InitializeTTDEvents()
     
-    -- 1. 获取判定结果
-    local shouldShow, reason = self:ShouldRecommendPestilence()
-    
-    -- 2. 状态检查：如果状态没有变化，且已经初始化过，则直接返回
-    if shouldShow == self.IsActive and self.OverlayFrame then
-        -- 如果处于激活状态，额外确保一次父级可见性（防止被 Hekili 意外隐藏）
-        if shouldShow then
-            local parent = self.OverlayFrame:GetParent()
-            if parent and not parent:IsShown() then parent:Show() end
-        end
-        return 
-    end
-
-    -- 3. 获取或创建覆盖层
+    local shouldShow, reason, diagnostics = self:ShouldRecommendPestilence()
     local overlay = self:CreateOverlay()
-    if not overlay then return end
-
-    -- 4. 执行状态切换
+    
     if shouldShow then
-        -- 进入激活状态
-        self.LastReason = reason -- 记录触发原因
-        HekiliHelper:DebugPrint(string.format("|cFF00FF00[DK] 开始渲染传染:|r %s", reason or "未知"))
-        
-        -- 确保父级可见
-        local parent = overlay:GetParent()
-        if parent then
-            parent:SetAlpha(1)
-            parent:Show()
+        if not overlay then return end
+
+        if not self.IsActive then
+            self.LastReason = reason
+            HekiliHelper:DebugPrint(string.format("|cFF00FF00[DK] 开始渲染传染:|r %s", reason or "未知"))
+            self.IsActive = true
         end
         
         overlay:Show()
-        self.IsActive = true
-    else
-        -- 进入熄灭状态
-        if self.IsActive then
-            HekiliHelper:DebugPrint(string.format("|cFFFF0000[DK] 停止渲染传染:|r (触发原因: %s)", self.LastReason or "判定失效"))
+        local parent = overlay:GetParent()
+        if parent then
+            if not parent:IsShown() then parent:Show() end
+            if parent:GetAlpha() < 0.1 then parent:SetAlpha(1) end
         end
-        overlay:Hide()
-        self.IsActive = false
-        self.LastReason = nil
+    else
+        -- 诊断：如果 debug 开启且长时间未触发，打印原因
+        if HekiliHelper.DebugEnabled and (GetTime() - self.LastDiagnosticTime > 5) then
+            HekiliHelper:DebugPrint(string.format("|cFF999999[DK] 运行中但未触发:|r %s", diagnostics or "检查中"))
+            self.LastDiagnosticTime = GetTime()
+        end
+
+        if self.IsActive then
+            if self.OverlayFrame then self.OverlayFrame:Hide() end
+            HekiliHelper:DebugPrint(string.format("|cFFFF0000[DK] 停止渲染传染:|r (触发原因: %s)", self.LastReason or "判定失效"))
+            self.IsActive = false
+            self.LastReason = nil
+        end
     end
 end
 
 function Module:ShouldRecommendPestilence()
-    if not IsSpellKnown(PESTILENCE_SPELL_ID) then return false end
-    if not self:IsBloodOrDeathRuneReady() then return false end
+    if not IsSpellKnown(PESTILENCE_SPELL_ID) then return false, nil, "技能未学习" end
+    
+    local runeReady = self:IsBloodOrDeathRuneReady()
+    if not runeReady then return false, nil, "符文未就绪" end
 
     -- 1. 距离检查
+    local distText = "未知"
     local RC = LibStub("LibRangeCheck-2.0")
     if RC then
         local _, maxRange = RC:GetRange("target")
-        if maxRange and maxRange > 3 then return false end
+        distText = tostring(maxRange or "超出检测范围")
+        if maxRange and maxRange > 3 then return false, nil, "目标过远 ("..distText.."码)" end
     end
 
     -- 2. 获取双病状态
     local hasFF, ffTime, hasBP, bpTime = self:GetTargetDiseaseStatus()
+    local diseaseInfo = string.format("FF=%s(%.1f) BP=%s(%.1f)", tostring(hasFF), ffTime, tostring(hasBP), bpTime)
 
-    -- 3. 核心判定 A: 刷新逻辑 (优先级最高，只要有一个不满3秒且双病都在就刷新)
+    -- 3. 核心判定 A: 刷新逻辑
     if hasFF and hasBP then
         if ffTime < 3.0 or bpTime < 3.0 then
             return true, string.format("刷新-时间不足: FF=%.1f BP=%.1f", ffTime, bpTime)
@@ -235,7 +276,7 @@ function Module:ShouldRecommendPestilence()
     end
 
     -- 4. 核心判定 B: 扩散逻辑
-    if hasFF and hasBP then -- 必须主目标有病才能扩散
+    if hasFF and hasBP then
         local noDiseaseCount = 0
         local anyOtherHighTTD = false
         local targetGUID = UnitGUID("target")
@@ -265,7 +306,6 @@ function Module:ShouldRecommendPestilence()
             return true, string.format("扩散-发现目标: 无病数=%d", noDiseaseCount)
         end
 
-        -- 核心判定 C: 高 TTD 提前刷新
         local isBoss = (UnitLevel("target") == -1 or UnitClassification("target") == "worldboss")
         local refreshThreshold = (isBoss and IsSpellKnown(ARMY_OF_THE_DEAD_ID)) and 5.5 or 3.0
         if anyOtherHighTTD and (ffTime < refreshThreshold or bpTime < refreshThreshold) then
@@ -273,7 +313,7 @@ function Module:ShouldRecommendPestilence()
         end
     end
 
-    return false
+    return false, nil, "条件未满足 ("..diseaseInfo..")"
 end
 
 -- 兼容性占位
