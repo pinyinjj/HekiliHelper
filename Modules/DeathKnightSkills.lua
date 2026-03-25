@@ -268,48 +268,55 @@ function Module:ShouldRecommendPestilence()
     local hasFF, ffTime, hasBP, bpTime = self:GetTargetDiseaseStatus()
     local diseaseInfo = string.format("FF=%s(%.1f) BP=%s(%.1f)", tostring(hasFF), ffTime, tostring(hasBP), bpTime)
 
-    -- 3. 核心判定 A: 刷新逻辑
-    if hasFF and hasBP then
-        if ffTime < 3.0 or bpTime < 3.0 then
-            return true, string.format("刷新-时间不足: FF=%.1f BP=%.1f", ffTime, bpTime)
-        end
-    end
-
-    -- 4. 核心判定 B: 扩散逻辑
-    if hasFF and hasBP then
-        local noDiseaseCount = 0
-        local anyOtherHighTTD = false
-        local targetGUID = UnitGUID("target")
-        local unitsToCheck = {"target", "focus", "mouseover"}
-        for i = 1, 40 do table.insert(unitsToCheck, "nameplate"..i) end
-        
-        local checked = {}
-        for _, unit in ipairs(unitsToCheck) do
-            if UnitExists(unit) and not UnitIsDead(unit) and UnitCanAttack("player", unit) then
-                local guid = UnitGUID(unit)
-                if guid and not checked[guid] then
-                    checked[guid] = true
-                    local _, maxRange = RC:GetRange(unit)
-                    if (not maxRange) or (maxRange <= 8) then
-                        if guid ~= targetGUID then
-                            local healthPct = (UnitHealthMax(unit) > 0) and (UnitHealth(unit) / UnitHealthMax(unit) * 100) or 0
-                            local ttd = self:GetTTD(unit) or (healthPct > 95 and 99 or 0)
-                            if ttd > 4.5 then anyOtherHighTTD = true end
-                            if not self:UnitHasMyDiseases(unit) then noDiseaseCount = noDiseaseCount + 1 end
-                        end
+    -- 3. 核心判定: 扫描周围目标 (扩散和 TTD 判定)
+    local noDiseaseCount = 0
+    local anyOtherHighTTD = false
+    local targetGUID = UnitGUID("target")
+    local unitsToCheck = {"target", "focus", "mouseover"}
+    for i = 1, 40 do table.insert(unitsToCheck, "nameplate"..i) end
+    
+    local checked = {}
+    for _, unit in ipairs(unitsToCheck) do
+        if UnitExists(unit) and not UnitIsDead(unit) and UnitCanAttack("player", unit) then
+            local guid = UnitGUID(unit)
+            if guid and not checked[guid] then
+                checked[guid] = true
+                local _, maxRange = RC:GetRange(unit)
+                if (not maxRange) or (maxRange <= 8) then
+                    if guid ~= targetGUID then
+                        local unitHealthPct = (UnitHealthMax(unit) > 0) and (UnitHealth(unit) / UnitHealthMax(unit) * 100) or 0
+                        local ttd = self:GetTTD(unit) or (unitHealthPct > 95 and 99 or 0)
+                        if ttd > 4.5 then anyOtherHighTTD = true end
+                        if not self:UnitHasMyDiseases(unit) then noDiseaseCount = noDiseaseCount + 1 end
                     end
                 end
             end
         end
+    end
 
+    -- 4. 判定逻辑
+    if hasFF and hasBP then
+        -- 情况 A: 扩散逻辑 (身边有目标没病)
         if noDiseaseCount >= 1 then
             return true, string.format("扩散-发现目标: 无病数=%d", noDiseaseCount)
         end
 
+        -- 情况 B: 刷新逻辑 (考虑当前目标 TTD)
+        local targetHealthPct = (UnitHealthMax("target") > 0) and (UnitHealth("target") / UnitHealthMax("target") * 100) or 0
+        local targetTTD = self:GetTTD("target") or (targetHealthPct > 95 and 99 or 0)
+
         local isBoss = (UnitLevel("target") == -1 or UnitClassification("target") == "worldboss")
+        -- 这里保留原有逻辑中可能存在的 Army of the Dead 判定 (可能为笔误，但保持行为一致)
         local refreshThreshold = (isBoss and IsSpellKnown(ARMY_OF_THE_DEAD_ID)) and 5.5 or 3.0
-        if anyOtherHighTTD and (ffTime < refreshThreshold or bpTime < refreshThreshold) then
-            return true, string.format("刷新-提前量: 阈值=%.1f", refreshThreshold)
+        
+        if ffTime < refreshThreshold or bpTime < refreshThreshold then
+            -- 核心逻辑：当前目标 TTD >= 4.5 或身边有其他高 TTD 目标时才刷新
+            if targetTTD >= 4.5 or anyOtherHighTTD then
+                local ttdInfo = string.format("targetTTD=%.1f otherHigh=%s", targetTTD, tostring(anyOtherHighTTD))
+                return true, string.format("刷新-时间不足: FF=%.1f BP=%.1f (%s)", ffTime, bpTime, ttdInfo)
+            end
+            -- 如果都不满足，则即使时间不足也不推荐刷新
+            return false, nil, string.format("刷新-放弃(TTD过短): targetTTD=%.1f", targetTTD)
         end
     end
 
