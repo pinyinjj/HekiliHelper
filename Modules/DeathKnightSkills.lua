@@ -306,8 +306,15 @@ function Module:ShouldRecommendPestilence()
         local targetTTD = self:GetTTD("target") or (targetHealthPct > 95 and 99 or 0)
 
         local isBoss = (UnitLevel("target") == -1 or UnitClassification("target") == "worldboss")
-        -- 这里保留原有逻辑中可能存在的 Army of the Dead 判定 (可能为笔误，但保持行为一致)
-        local refreshThreshold = (isBoss and IsSpellKnown(ARMY_OF_THE_DEAD_ID)) and 5.5 or 3.0
+        
+        -- 判定大军是否可用 (只有在 Boss 战且大军可用时，才需要提前刷新疾病以防爆发期断病)
+        local armyReady = false
+        if IsSpellKnown(ARMY_OF_THE_DEAD_ID) then
+            local start, duration = GetSpellCooldown(ARMY_OF_THE_DEAD_ID)
+            armyReady = (start == 0 or (GetTime() - start) >= duration)
+        end
+        
+        local refreshThreshold = (isBoss and armyReady) and 5.5 or 3.0
         
         if ffTime < refreshThreshold or bpTime < refreshThreshold then
             -- 核心逻辑：当前目标 TTD >= 4.5 或身边有其他高 TTD 目标时才刷新
