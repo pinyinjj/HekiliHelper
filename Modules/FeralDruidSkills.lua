@@ -79,7 +79,8 @@ function Module:GetOverlayFrame(dispName, parent)
     local f = CreateFrame("Frame", "HekiliHelperFeralOverlay_"..dispName, parent)
     f:SetSize(size, size)
     f:SetPoint("CENTER", parent, "CENTER")
-    f:SetFrameLevel(parent:GetFrameLevel() + 100)
+    f:SetFrameStrata("TOOLTIP") -- 显式设为最高层级
+    f:SetFrameLevel(9000)      -- 使用极高的绝对层级压过数字
     
     f.texture = f:CreateTexture(nil, "OVERLAY")
     f.texture:SetAllPoints(f)
