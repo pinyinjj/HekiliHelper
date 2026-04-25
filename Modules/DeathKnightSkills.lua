@@ -97,11 +97,14 @@ function Module:GetTargetDiseaseStatus()
     local hasFF, ffTime, hasBP, bpTime = false, 0, false, 0
     for i = 1, 40 do
         local name, _, _, _, _, expirationTime, unitCaster, _, _, spellId = UnitDebuff("target", i)
-        if not name then break end -- 修复：使用 name 判定循环结束
+        if not name then break end
         if unitCaster == "player" then
             local timeLeft = expirationTime > 0 and (expirationTime - GetTime()) or 99
-            if spellId == FROST_FEVER_ID then hasFF, ffTime = true, timeLeft
-            elseif spellId == BLOOD_PLAGUE_ID then hasBP, bpTime = true, timeLeft end
+            if spellId == FROST_FEVER_ID or name == "霜疫" or name == "Frost Fever" then 
+                hasFF, ffTime = true, timeLeft
+            elseif spellId == BLOOD_PLAGUE_ID or name == "血疫" or name == "Blood Plague" then 
+                hasBP, bpTime = true, timeLeft 
+            end
         end
     end
     return hasFF, ffTime, hasBP, bpTime
@@ -113,8 +116,11 @@ function Module:UnitHasMyDiseases(unit)
         local name, _, _, _, _, _, unitCaster, _, _, spellId = UnitDebuff(unit, i)
         if not name then break end
         if unitCaster == "player" then
-            if spellId == FROST_FEVER_ID then hasFF = true
-            elseif spellId == BLOOD_PLAGUE_ID then hasBP = true end
+            if spellId == FROST_FEVER_ID or name == "霜疫" or name == "Frost Fever" then 
+                hasFF = true
+            elseif spellId == BLOOD_PLAGUE_ID or name == "血疫" or name == "Blood Plague" then 
+                hasBP = true 
+            end
         end
     end
     return hasFF and hasBP
@@ -256,13 +262,14 @@ function Module:ShouldRecommendPestilence()
     local runeReady = self:IsBloodOrDeathRuneReady()
     if not runeReady then return false, nil, "符文未就绪" end
 
-    -- 1. 距离检查
+    -- 1. 距离检查 (确保对当前目标在近战范围内)
     local distText = "未知"
     local RC = LibStub("LibRangeCheck-2.0")
     if RC then
         local _, maxRange = RC:GetRange("target")
         distText = tostring(maxRange or "超出检测范围")
-        if maxRange and maxRange > 3 then return false, nil, "目标过远 ("..distText.."码)" end
+        -- 传染是近战范围，LibRangeCheck 通常返回 5 或 8 码。如果 maxRange 为 nil 或大于 8，判定为过远。
+        if (not maxRange) or (maxRange > 8) then return false, nil, "目标过远 ("..distText.."码)" end
     end
 
     -- 2. 获取双病状态
@@ -297,27 +304,23 @@ function Module:ShouldRecommendPestilence()
 
     -- 4. 判定逻辑
     if hasFF and hasBP then
+        -- 获取 Hekili 当前模式
+        local hekiliMode = Hekili and Hekili.DB and Hekili.DB.profile and Hekili.DB.profile.toggles and Hekili.DB.profile.toggles.mode and Hekili.DB.profile.toggles.mode.value or "automatic"
+
         -- 情况 A: 扩散逻辑 (身边有目标没病)
-        if noDiseaseCount >= 1 then
-            return true, string.format("扩散-发现目标: 无病数=%d", noDiseaseCount)
+        -- 用户需求：在 single 模式下不扩散，在 aoe 和 automatic 模式下扩散
+        if hekiliMode ~= "single" and noDiseaseCount >= 1 then
+            return true, string.format("扩散-发现目标: 无病数=%d (模式=%s)", noDiseaseCount, hekiliMode)
         end
 
         -- 情况 B: 刷新逻辑 (考虑当前目标 TTD)
         local targetHealthPct = (UnitHealthMax("target") > 0) and (UnitHealth("target") / UnitHealthMax("target") * 100) or 0
         local targetTTD = self:GetTTD("target") or (targetHealthPct > 95 and 99 or 0)
 
-        local isBoss = (UnitLevel("target") == -1 or UnitClassification("target") == "worldboss")
-        
-        -- 判定大军是否可用 (只有在 Boss 战且大军可用时，才需要提前刷新疾病以防爆发期断病)
-        local armyReady = false
-        if IsSpellKnown(ARMY_OF_THE_DEAD_ID) then
-            local start, duration = GetSpellCooldown(ARMY_OF_THE_DEAD_ID)
-            armyReady = (start == 0 or (GetTime() - start) >= duration)
-        end
-        
-        local refreshThreshold = (isBoss and armyReady) and 5.5 or 3.0
-        
+        local refreshThreshold = 3.0
+
         if ffTime < refreshThreshold or bpTime < refreshThreshold then
+
             -- 核心逻辑：当前目标 TTD >= 4.5 或身边有其他高 TTD 目标时才刷新
             if targetTTD >= 4.5 or anyOtherHighTTD then
                 local ttdInfo = string.format("targetTTD=%.1f otherHigh=%s", targetTTD, tostring(anyOtherHighTTD))
@@ -330,7 +333,3 @@ function Module:ShouldRecommendPestilence()
 
     return false, nil, "条件未满足 ("..diseaseInfo..")"
 end
-
--- 兼容性占位
-function Module:ForceInsertPestilence() end
-function Module:InsertDeathKnightSkills() end

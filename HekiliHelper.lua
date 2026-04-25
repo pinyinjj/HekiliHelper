@@ -305,20 +305,6 @@ function HekiliHelper:OnInitialize()
     self:RegisterChatCommand("hekilihelperdebug", "ToggleDebug")
     self:RegisterChatCommand("hhdebugwin", "ShowDebugWindow")
     self:RegisterChatCommand("hhlist", "PrintRecommendationQueue")
-    self:RegisterChatCommand("hhtestpest", function()
-        -- 强制测试，不管职业
-        local _, class = UnitClass("player")
-        self:Print("当前职业: " .. tostring(class))
-        if class ~= "DEATHKNIGHT" then
-            self:Print("|cFFFF0000错误: 你不是死亡骑士，无法使用传染功能！|r")
-            return
-        end
-        if self.DeathKnightSkills and self.DeathKnightSkills.ForceInsertPestilence then
-            self.DeathKnightSkills:ForceInsertPestilence()
-        else
-            self:Print("|cFFFF0000错误: DeathKnightSkills 模块未初始化|r")
-        end
-    end)
     
     -- 创建模块对象（如果模块文件已加载）
     if not self.MeleeTargetIndicator then
