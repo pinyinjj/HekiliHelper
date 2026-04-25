@@ -294,8 +294,14 @@ function Module:ShouldRecommendPestilence()
                     if guid ~= targetGUID then
                         local unitHealthPct = (UnitHealthMax(unit) > 0) and (UnitHealth(unit) / UnitHealthMax(unit) * 100) or 0
                         local ttd = self:GetTTD(unit) or (unitHealthPct > 95 and 99 or 0)
-                        if ttd > 4.5 then anyOtherHighTTD = true end
-                        if not self:UnitHasMyDiseases(unit) then noDiseaseCount = noDiseaseCount + 1 end
+                        
+                        -- 核心判定：只有 TTD > 4.5 的目标才被视为有效扩散或刷新目标
+                        if ttd > 4.5 then
+                            anyOtherHighTTD = true
+                            if not self:UnitHasMyDiseases(unit) then 
+                                noDiseaseCount = noDiseaseCount + 1 
+                            end
+                        end
                     end
                 end
             end
