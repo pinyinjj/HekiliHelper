@@ -77,9 +77,32 @@ function Module:CheckRiptide()
 end
 
 function Module:CheckEarthShield()
-    local targetUnit = self:GetBestTarget()
-    if not targetUnit or self:HasBuff(targetUnit, 49284) then return false end
-    return true, targetUnit
+    -- 仅检测焦点目标：是否存在、是否为友方、是否存活
+    if UnitExists("focus") and UnitIsFriend("player", "focus") and not UnitIsDead("focus") then
+        
+        -- 遍历焦点目标身上的buff，高容错检查是否有大地之盾
+        local hasEarthShield = false
+        for i = 1, 40 do
+            local name, _, _, _, _, _, _, _, _, spellId = UnitBuff("focus", i)
+            if not name then break end -- 没有更多buff了，跳出循环
+            
+            -- 同时匹配法术ID和中英文名称，兼容所有等级的大地之盾
+            if spellId == 49284 or name:find("大地之盾") or name:find("Earth Shield") then 
+                hasEarthShield = true
+                break 
+            end
+        end
+
+        -- 逻辑判断：有盾则停止推荐，没盾则推荐
+        if hasEarthShield then
+            return false -- 焦点有buff，不触发
+        else
+            return true, "focus" -- 焦点没有buff，触发，建议对焦点施放
+        end
+    end
+
+    -- 如果没有焦点，或者焦点不是友方/已死亡，绝对不触发
+    return false
 end
 
 function Module:CheckHealingWave()
