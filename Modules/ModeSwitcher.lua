@@ -229,6 +229,12 @@ function Module:CreateUI(parent)
 
     -- 注册更新事件，动态锚定到最后一个显示的图标
     frame:SetScript("OnUpdate", function(self, elapsed)
+        -- 检查整体开关
+        if not HekiliHelper.DB or not HekiliHelper.DB.profile or not HekiliHelper.DB.profile.modeSwitcher or not HekiliHelper.DB.profile.modeSwitcher.enabled then
+            if self:IsShown() then self:Hide() end
+            return
+        end
+
         if not self.lastUpdate then self.lastUpdate = 0 end
         self.lastUpdate = self.lastUpdate + elapsed
         if self.lastUpdate > 0.1 then -- 每0.1秒校准一次位置

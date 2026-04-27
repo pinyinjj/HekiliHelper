@@ -32,15 +32,22 @@ end
 -- 技能定义与逻辑
 -- ============================================
 
+-- WLK 治疗萨满技能 ID (Level 80)
+-- 治疗波 Rank 14: 49272
+-- 次级治疗波 Rank 9: 49276
+-- 治疗链 Rank 4: 49273
+-- 激流 Rank 1: 61295
+-- 水之护盾 Rank 8: 57960
+-- 大地之盾 Rank 5: 49284
+
 Module.SkillDefinitions = {
-    { actionName = "stoneclaw_totem", spellID = 58582, priority = 8, checkFunc = function(self) return self:CheckStoneclawTotem() end, displayName = "石爪图腾" },
     { actionName = "water_shield", spellID = 57960, priority = 1, checkFunc = function(self) return self:CheckWaterShield() end, displayName = "水之护盾" },
     { actionName = "earthliving_weapon", spellID = 51994, priority = 2, checkFunc = function(self) return self:CheckEarthlivingWeapon() end, displayName = "大地生命武器" },
     { actionName = "earth_shield", spellID = 49284, priority = 3, checkFunc = function(self) return self:CheckEarthShield() end, displayName = "大地之盾" },
     { actionName = "riptide", spellID = 61295, priority = 4, checkFunc = function(self) return self:CheckRiptide() end, displayName = "激流" },
     { actionName = "tide_force", spellID = 55198, priority = 4.5, checkFunc = function(self) return self:CheckTideForce() end, displayName = "潮汐之力" },
+    { actionName = "healing_wave", spellID = 49272, priority = 5, checkFunc = function(self) return self:CheckHealingWave() end, displayName = "治疗波" },
     { actionName = "chain_heal", spellID = 49273, priority = 6, checkFunc = function(self) return self:CheckChainHeal() end, displayName = "治疗链" },
-    { actionName = "healing_wave", spellID = 49273, priority = 5, checkFunc = function(self) return self:CheckHealingWave() end, displayName = "治疗波" },
     { actionName = "lesser_healing_wave", spellID = 49276, priority = 7, checkFunc = function(self) return self:CheckLesserHealingWave() end, displayName = "次级治疗波" },
 }
 
@@ -61,18 +68,12 @@ function Module:CheckWaterShield()
     return true, "player"
 end
 
-function Module:CheckStoneclawTotem()
-    if not UnitAffectingCombat("player") then return false end
-    local haveTotem, totemName = GetTotemInfo(2) -- Earth
-    if haveTotem and totemName ~= "" then return false end
-    return true, "player"
-end
-
 function Module:CheckRiptide()
     if not self:IsSpellReady(61295) then return false end
     local targetUnit = self:GetBestTarget()
     if not targetUnit then return false end
-    if self:GetUnitHealthPercent(targetUnit) > 99 then return false end
+    local threshold = (HekiliHelper.DB.profile.healingShaman and HekiliHelper.DB.profile.healingShaman.riptideThreshold) or 99
+    if self:GetUnitHealthPercent(targetUnit) > threshold then return false end
     return true, targetUnit
 end
 
@@ -106,25 +107,33 @@ function Module:CheckEarthShield()
 end
 
 function Module:CheckHealingWave()
+    if HekiliHelper.DB.profile.healingShaman and HekiliHelper.DB.profile.healingShaman.enableHealingWave == false then return false end
     local targetUnit = self:GetBestTarget()
-    if not targetUnit or self:GetUnitHealthPercent(targetUnit) > 30 then return false end
+    if not targetUnit then return false end
+    local threshold = (HekiliHelper.DB.profile.healingShaman and HekiliHelper.DB.profile.healingShaman.healingWaveThreshold) or 30
+    if self:GetUnitHealthPercent(targetUnit) > threshold then return false end
     return true, targetUnit
 end
 
 function Module:CheckLesserHealingWave()
+    if HekiliHelper.DB.profile.healingShaman and HekiliHelper.DB.profile.healingShaman.enableLesserHealingWave == false then return false end
     local targetUnit = self:GetBestTarget()
-    if not targetUnit or self:GetUnitHealthPercent(targetUnit) > 90 then return false end
+    if not targetUnit then return false end
+    local threshold = (HekiliHelper.DB.profile.healingShaman and HekiliHelper.DB.profile.healingShaman.lesserHealingWaveThreshold) or 90
+    if self:GetUnitHealthPercent(targetUnit) > threshold then return false end
     return true, targetUnit
 end
 
 function Module:CheckTideForce()
     if not self:IsSpellReady(55198) then return false end
-    if self:GetUnitHealthPercent("player") < 50 then return true, "player" end
+    local threshold = (HekiliHelper.DB.profile.healingShaman and HekiliHelper.DB.profile.healingShaman.tideForceThreshold) or 50
+    if self:GetUnitHealthPercent("player") < threshold then return true, "player" end
     return false
 end
 
 function Module:CheckEarthlivingWeapon()
     local info = { GetWeaponEnchantInfo() }
+    -- 大地生命附魔 ID 3350
     if not info[1] or info[4] ~= 3350 then return true, "player" end
     return false
 end
@@ -168,6 +177,12 @@ end
 
 function Module:InsertHealingSkills()
     if not Hekili or not Hekili.DisplayPool then return end
+    
+    -- 检查整体开关
+    if not HekiliHelper.DB or not HekiliHelper.DB.profile or not HekiliHelper.DB.profile.healingShaman or not HekiliHelper.DB.profile.healingShaman.enabled then
+        return
+    end
+
     for dispName, UI in pairs(Hekili.DisplayPool) do
         local lowerName = dispName:lower()
         if (lowerName == "primary" or lowerName == "aoe") and UI.Active and UI.alpha > 0 then

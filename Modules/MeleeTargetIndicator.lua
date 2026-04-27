@@ -59,6 +59,12 @@ end
 function Module:CountEnemiesInMeleeRange()
     local RC = LibStub("LibRangeCheck-2.0")
     if not RC then return 0 end
+    
+    local range = 5
+    if HekiliHelper.DB and HekiliHelper.DB.profile and HekiliHelper.DB.profile.meleeIndicator then
+        range = HekiliHelper.DB.profile.meleeIndicator.checkRange or 5
+    end
+
     local count = 0
     local checked = {}
     
@@ -71,7 +77,7 @@ function Module:CountEnemiesInMeleeRange()
             if guid and not checked[guid] then
                 checked[guid] = true
                 local _, maxRange = RC:GetRange(unit)
-                if (not maxRange) or (maxRange <= 5) then
+                if (not maxRange) or (maxRange <= range) then
                     count = count + 1
                 end
             end
