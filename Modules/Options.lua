@@ -360,6 +360,52 @@ function Module:GetOptions()
                             db.healingShaman.enableLesserHealingWave = val
                         end,
                     },
+                    enableTideForce = {
+                        type = "toggle",
+                        name = "启用潮汐之力",
+                        desc = "在推荐列表中包含潮汐之力",
+                        order = 10.3,
+                        width = "full",
+                        get = function()
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return true
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then db.healingShaman = {} end
+                            return db.healingShaman.enableTideForce ~= false
+                        end,
+                        set = function(info, val)
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then db.healingShaman = {} end
+                            db.healingShaman.enableTideForce = val
+                        end,
+                    },
+                    enableManaTide = {
+                        type = "toggle",
+                        name = "启用法力之潮图腾",
+                        desc = "在推荐列表中包含法力之潮图腾",
+                        order = 10.4,
+                        width = "full",
+                        get = function()
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return true
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then db.healingShaman = {} end
+                            return db.healingShaman.enableManaTide ~= false
+                        end,
+                        set = function(info, val)
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then db.healingShaman = {} end
+                            db.healingShaman.enableManaTide = val
+                        end,
+                    },
                     riptideThreshold = {
                         type = "range",
                         name = "激流（剩余生命值%）",
@@ -419,6 +465,37 @@ function Module:GetOptions()
                                 db.healingShaman = {}
                             end
                             db.healingShaman.tideForceThreshold = val
+                        end
+                    },
+
+                    manaTideThreshold = {
+                        type = "range",
+                        name = "法力之潮图腾（剩余法力值%）",
+                        desc = "当玩家法力值低于此百分比时触发。",
+                        order = 10.8,
+                        min = 1,
+                        max = 100,
+                        step = 1,
+                        width = "full",
+                        get = function()
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return 30
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then
+                                db.healingShaman = {}
+                            end
+                            return db.healingShaman.manaTideThreshold or 30
+                        end,
+                        set = function(info, val)
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.healingShaman then
+                                db.healingShaman = {}
+                            end
+                            db.healingShaman.manaTideThreshold = val
                         end
                     },
                     

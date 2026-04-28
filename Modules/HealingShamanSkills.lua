@@ -44,6 +44,7 @@ Module.SkillDefinitions = {
     { actionName = "water_shield", spellID = 57960, priority = 1, checkFunc = function(self) return self:CheckWaterShield() end, displayName = "水之护盾" },
     { actionName = "earthliving_weapon", spellID = 51994, priority = 2, checkFunc = function(self) return self:CheckEarthlivingWeapon() end, displayName = "大地生命武器" },
     { actionName = "earth_shield", spellID = 49284, priority = 3, checkFunc = function(self) return self:CheckEarthShield() end, displayName = "大地之盾" },
+    { actionName = "mana_tide", spellID = 16190, priority = 3.5, checkFunc = function(self) return self:CheckManaTide() end, displayName = "法力之潮图腾" },
     { actionName = "riptide", spellID = 61295, priority = 4, checkFunc = function(self) return self:CheckRiptide() end, displayName = "激流" },
     { actionName = "tide_force", spellID = 55198, priority = 4.5, checkFunc = function(self) return self:CheckTideForce() end, displayName = "潮汐之力" },
     { actionName = "healing_wave", spellID = 49272, priority = 5, checkFunc = function(self) return self:CheckHealingWave() end, displayName = "治疗波" },
@@ -59,7 +60,24 @@ function Module:CheckChainHeal()
     return true, targetUnit
 end
 
+function Module:CheckManaTide()
+    if HekiliHelper.DB.profile.healingShaman and HekiliHelper.DB.profile.healingShaman.enableManaTide == false then return false end
+    if not self:IsSpellReady(16190) then return false end
+
+    local threshold = (HekiliHelper.DB.profile.healingShaman and HekiliHelper.DB.profile.healingShaman.manaTideThreshold) or 30
+    if self:GetUnitManaPercent("player") < threshold then return true, "player" end
+    return false
+end
+
 function Module:CheckWaterShield()
+    -- 如果技能正在冷却中或被沉默，则不推荐
+    if not self:IsSpellReady(57960) then return false end
+    
+    local isUsable, noMana = IsUsableSpell(57960)
+    if not isUsable and not noMana then
+        return false
+    end
+
     for i = 1, 40 do
         local name, _, _, _, _, _, _, _, _, spellId = UnitBuff("player", i)
         if not name then break end
@@ -81,6 +99,13 @@ function Module:CheckEarthShield()
     -- 仅检测焦点目标：是否存在、是否为友方、是否存活
     if UnitExists("focus") and UnitIsFriend("player", "focus") and not UnitIsDead("focus") then
         
+        -- 检查技能是否可用（沉默、蓝量等）
+        local isUsable, noMana = IsUsableSpell(49284)
+        if not isUsable and not noMana then return false end
+
+        -- 检查距离
+        if IsSpellInRange(GetSpellInfo(49284), "focus") ~= 1 then return false end
+
         -- 遍历焦点目标身上的buff，高容错检查是否有大地之盾
         local hasEarthShield = false
         for i = 1, 40 do
@@ -125,10 +150,51 @@ function Module:CheckLesserHealingWave()
 end
 
 function Module:CheckTideForce()
+    if HekiliHelper.DB.profile.healingShaman and HekiliHelper.DB.profile.healingShaman.enableTideForce == false then return false end
     if not self:IsSpellReady(55198) then return false end
+    
     local threshold = (HekiliHelper.DB.profile.healingShaman and HekiliHelper.DB.profile.healingShaman.tideForceThreshold) or 50
+    local lowHealthCount = self:GetLowHealthGroupMembersCount(threshold)
+    
+    local isRaid = IsInRaid()
+    local groupSize = isRaid and GetNumGroupMembers() or GetNumSubgroupMembers() + 1
+    
+    if isRaid then
+        -- 团队状态：1/3以上成员生命值低于阈值
+        if lowHealthCount >= (groupSize / 3) then return true, "player" end
+    else
+        -- 小队状态：一半以上成员生命值低于阈值
+        if lowHealthCount >= (groupSize / 2) then return true, "player" end
+    end
+    
+    -- 自身生命值低于阈值也触发
     if self:GetUnitHealthPercent("player") < threshold then return true, "player" end
+    
     return false
+end
+
+function Module:GetLowHealthGroupMembersCount(threshold)
+    local count = 0
+    local isRaid = IsInRaid()
+    local prefix = isRaid and "raid" or "party"
+    local numMembers = isRaid and GetNumGroupMembers() or GetNumSubgroupMembers()
+
+    -- 检查队友
+    for i = 1, numMembers do
+        local unit = prefix .. i
+        if UnitExists(unit) and not UnitIsDead(unit) and self:GetUnitHealthPercent(unit) < threshold then
+            count = count + 1
+        end
+    end
+
+    -- 检查自己 (party模式下numMembers不包含自己)
+    if not isRaid then
+        if not UnitIsDead("player") and self:GetUnitHealthPercent("player") < threshold then
+            count = count + 1
+        end
+    end
+
+    return count
 end
 
 function Module:CheckEarthlivingWeapon()
@@ -145,6 +211,11 @@ end
 function Module:GetUnitHealthPercent(unit)
     local h, m = UnitHealth(unit), UnitHealthMax(unit)
     return (m > 0) and (h / m * 100) or 100
+end
+
+function Module:GetUnitManaPercent(unit)
+    local m, mx = UnitPower(unit), UnitPowerMax(unit)
+    return (mx > 0) and (m / mx * 100) or 100
 end
 
 function Module:HasBuff(unit, spellID)

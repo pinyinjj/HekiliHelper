@@ -256,8 +256,11 @@ function HekiliHelper:OnInitialize()
             },
             healingShaman = {
                 enabled = true,
+                enableTideForce = true,
+                enableManaTide = true,
                 riptideThreshold = 99,
                 tideForceThreshold = 50,
+                manaTideThreshold = 30,
                 chainHealThreshold = 90,
                 healingWaveThreshold = 30,
                 lesserHealingWaveThreshold = 90,
