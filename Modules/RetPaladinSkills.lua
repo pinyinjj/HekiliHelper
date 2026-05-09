@@ -1,6 +1,6 @@
 -- Modules/RetPaladinSkills.lua
 -- 惩戒骑士技能插入模块
--- 在优先级队列中插入惩戒骑士推荐技能
+-- 优化点：精准测距、智能缓冲让位、圣印叠层判定修复
 
 local HekiliHelper = _G.HekiliHelper
 if not HekiliHelper then return end
@@ -18,10 +18,10 @@ Module.ttdData = { lastHP = 0, lastTime = 0, ttd = 999, guid = nil }
 function Module:Initialize()
     if not Hekili or not Hekili.Update then return false end
     
-    -- Hook Hekili.Update
+    self:CreateStatusHUD()
+
     local success = HekiliHelper.HookUtils.Wrap(Hekili, "Update", function(oldFunc, self, ...)
         local result = oldFunc(self, ...)
-        -- 移除 Timer，直接同步执行，解决闪烁问题
         Module:InsertPaladinSkills()
         return result
     end)
@@ -30,61 +30,98 @@ function Module:Initialize()
 end
 
 -- ============================================
--- 技能定义与逻辑
+-- 调试 HUD (状态显示)
 -- ============================================
 
-Module.SkillDefinitions = {
-    -- 生存/爆发
-    { actionName = "will_to_survive", spellID = 59752, priority = 1, checkFunc = function(self) return self:CheckWillToSurvive() end, displayName = "生存意志" },
-    { actionName = "avenging_wrath", spellID = 31884, priority = 1.1, checkFunc = function(self) return self:CheckAvengingWrath() end, displayName = "复仇之怒" },
-    { actionName = "divine_plea", spellID = 54428, priority = 1.2, checkFunc = function(self) return self:CheckDivinePlea() end, displayName = "神圣恳求" },
-    { actionName = "lights_plea", spellID = 1298728, priority = 1.3, checkFunc = function(self) return self:CheckLightsPlea() end, displayName = "祈求圣光" },
-    
-    -- 核心输出 (高优先级)
-    { actionName = "hammer_of_wrath", spellID = 48806, priority = 2, checkFunc = function(self) return self:CheckHammerOfWrath() end, displayName = "愤怒之锤" },
-    
-    -- 十字军优先模式 (正义 < 5层时)
-    { actionName = "crusader_strike_high", spellID = 35395, priority = 3, checkFunc = function(self) return self:CheckCrusaderStrike(true) end, displayName = "十字军打击(叠层)" },
-    { actionName = "divine_storm_low", spellID = 53385, priority = 3.1, checkFunc = function(self) return self:CheckDivineStorm(false) end, displayName = "神圣风暴(填充)" },
-    
-    -- 神圣风暴优先模式 (正义 >= 5层时)
-    { actionName = "divine_storm_high", spellID = 53385, priority = 3.5, checkFunc = function(self) return self:CheckDivineStorm(true) end, displayName = "神圣风暴(爆发)" },
-    { actionName = "crusader_strike_low", spellID = 35395, priority = 3.6, checkFunc = function(self) return self:CheckCrusaderStrike(false) end, displayName = "十字军打击(填充)" },
-    
-    -- 动态驱邪术 (对亡灵/恶魔优先级极高)
-    { actionName = "exorcism_high", spellID = 48801, priority = 4.5, checkFunc = function(self) return self:CheckExorcism(true) end, displayName = "驱邪术(亡灵/恶魔)" },
-    
-    -- 填充技能
-    { actionName = "judgement_of_light", spellID = 20271, priority = 5, checkFunc = function(self) return self:CheckJudgement(20271) end, displayName = "圣光审判" },
-    { actionName = "judgement_of_wisdom", spellID = 53408, priority = 5.1, checkFunc = function(self) return self:CheckJudgement(53408) end, displayName = "智慧审判" },
-    
-    -- 普通驱邪术
-    { actionName = "exorcism", spellID = 48801, priority = 6, checkFunc = function(self) return self:CheckExorcism(false) end, displayName = "驱邪术" },
-    
-    { actionName = "consecration", spellID = 48819, priority = 7, checkFunc = function(self) return self:CheckConsecration() end, displayName = "奉献" },
-    { actionName = "holy_wrath", spellID = 48817, priority = 8, checkFunc = function(self) return self:CheckHolyWrath() end, displayName = "神圣愤怒" },
-    
-    -- 辅助/其他
-    { actionName = "divine_shield", spellID = 642, priority = 9, checkFunc = function(self) return self:CheckDivineShield() end, displayName = "圣盾术" },
-    { actionName = "hand_of_salvation", spellID = 1038, priority = 10, checkFunc = function(self) return self:CheckHandOfSalvation() end, displayName = "拯救之手" },
-    { actionName = "lionheart", spellID = 20599, priority = 11, checkFunc = function(self) return self:CheckLionheart() end, displayName = "狮心" },
-}
+Module.HUDData = {}
 
-function Module:IsInRange(id, unit)
-    unit = unit or "target"
-    if not UnitExists(unit) then return false end
-    -- 使用十字军打击 (35395) 作为近战范围参考，如果传入 ID 为 nil
-    local spell = id and GetSpellInfo(id) or GetSpellInfo(35395)
-    return IsSpellInRange(spell, unit) == 1
+function Module:CreateStatusHUD()
+    if self.HUDFrame then return end
+
+    local frame = CreateFrame("Frame", "HekiliHelperRetHUD", UIParent, "BackdropTemplate")
+    frame:SetSize(250, 400)
+    frame:SetPoint("CENTER", 300, 0)
+    frame:SetMovable(true)
+    frame:EnableMouse(true)
+    frame:RegisterForDrag("LeftButton")
+    frame:SetClampedToScreen(true)
+    
+    frame:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    frame:SetBackdropColor(0, 0, 0, 0.7)
+
+    frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    frame.title:SetPoint("TOP", 0, -10)
+    frame.title:SetText("惩戒骑逻辑监控 (可拖动)")
+
+    frame.text = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.text:SetPoint("TOPLEFT", 10, -30)
+    frame.text:SetJustifyH("LEFT")
+    frame.text:SetJustifyV("TOP")
+    frame.text:SetWidth(230)
+
+    frame:SetScript("OnDragStart", frame.StartMoving)
+    frame:SetScript("OnDragStop", function(f) f:StopMovingOrSizing() end)
+
+    self.HUDFrame = frame
+    if HekiliHelper.DebugEnabled then frame:Show() else frame:Hide() end
 end
 
-function Module:IsBoss(unit)
+function Module:UpdateHUDText()
+    if not self.HUDFrame or not self.HUDFrame:IsShown() then return end
+    
+    local lines = {}
+    
+    -- 1. 全局状态
+    local righteousnessStacks = self:GetBuffStacks("player", 1299090)
+    local minR, maxR = self:GetUnitRange("target")
+    local rangeStr = "未知"
+    if minR and maxR then rangeStr = string.format("%d-%d码", minR, maxR)
+    elseif maxR then rangeStr = string.format("0-%d码", maxR) end
+
+    table.insert(lines, string.format("|cFFFFFF00[全局状态]|r"))
+    table.insert(lines, string.format("正义Buff(1299090): %d层", righteousnessStacks))
+    table.insert(lines, string.format("目标精确距离: %s", rangeStr))
+    table.insert(lines, string.format("预计死亡时间(TTD): %.1fs", self:GetTTD()))
+    
+    table.insert(lines, "----------------------")
+
+    for _, def in ipairs(self.SkillDefinitions) do
+        local data = self.HUDData[def.actionName]
+        if data then
+            local color = data.should and "|cFF00FF00" or "|cFFFF0000"
+            table.insert(lines, string.format("%s%s|r: %s", color, def.displayName, data.reason or "判定中"))
+        end
+    end
+
+    self.HUDFrame.text:SetText(table.concat(lines, "\n"))
+end
+
+function Module:SetHUDReason(actionName, should, reason)
+    self.HUDData[actionName] = self.HUDData[actionName] or {}
+    self.HUDData[actionName].should = should
+    self.HUDData[actionName].reason = reason
+end
+
+-- ============================================
+-- 核心判定工具
+-- ============================================
+
+function Module:GetUnitRange(unit)
     unit = unit or "target"
-    if not UnitExists(unit) then return false end
-    local level = UnitLevel(unit)
-    local classification = UnitClassification(unit)
-    -- -1 表示首领级别，83 是 WLK 首领等级
-    return level == -1 or level == 83 or classification == "worldboss" or classification == "boss"
+    if not UnitExists(unit) then return nil, nil end
+
+    -- 使用与 RangeDisplay 相同的 LibRangeCheck-3.0
+    local rc = LibStub("LibRangeCheck-3.0", true) or LibStub("LibRangeCheck-2.0", true)
+    if rc then
+        return rc:GetRange(unit)
+    end
+
+    return nil, nil
 end
 
 function Module:UpdateTTD()
@@ -120,408 +157,302 @@ function Module:GetTTD()
     return self.ttdData.ttd
 end
 
-function Module:CheckWillToSurvive()
-    -- 如果玩家生命值低于 30% 且被控制，简单判断
-    if self:GetUnitHealthPercent("player") < 30 then
-        -- 这里可以添加更复杂的控制检测
-        return false
+function Module:IsBoss(unit)
+    unit = unit or "target"
+    if not UnitExists(unit) then return false end
+    local level = UnitLevel(unit)
+    local classification = UnitClassification(unit)
+    return level == -1 or level == 83 or classification == "worldboss" or classification == "boss"
+end
+
+-- ============================================
+-- 基础判定工具
+-- ============================================
+
+function Module:IsSpellReady(id, currentPriority)
+    local s, d = GetSpellCooldown(id)
+    -- GCD 判定参考 (使用 61304 作为标准 GCD 锚点)
+    local gS, gD = GetSpellCooldown(61304)
+
+    -- 1. 如果完全没有 CD
+    if not s or s == 0 then return true, "已就绪" end
+
+    -- 2. 排除 GCD 影响：
+    -- 如果当前技能的持续时间 d 与 GCD 持续时间 gD 相同，且起始时间一致，说明这只是 GCD
+    if gS and gS > 0 and s == gS and d == gD then
+        return true, "GCD中"
+    end
+
+    -- 3. 计算真实 CD
+    local cd = s + d - GetTime()
+    if cd <= 0 then return true, "已就绪" end
+
+    return false, string.format("CD(%.1fs)", cd)
+end
+
+function Module:IsLearned(name, id)
+    local cleanName = name:match("^(.-)%s*%(") or name
+    return IsSpellKnown(id) or GetSpellInfo(cleanName) ~= nil
+end
+
+function Module:HasBuff(unit, spellID)
+    if not unit or not spellID then return false end
+    for i = 1, 40 do
+        local name, _, _, _, _, _, _, _, _, _, sID = UnitBuff(unit, i)
+        if not name then break end
+        -- 兼容性处理：尝试第10个和第11个返回值作为 spellId
+        local id10 = select(10, UnitBuff(unit, i))
+        local id11 = select(11, UnitBuff(unit, i))
+        if id10 == spellID or id11 == spellID then return true end
+        
+        -- 按名称回退 (仅当能够获取名称时)
+        local targetName = GetSpellInfo(spellID)
+        if targetName and name == targetName then return true end
     end
     return false
 end
 
 function Module:GetBuffStacks(unit, spellID)
+    if not unit or not spellID then return 0 end
     for i = 1, 40 do
-        local _, _, count, _, _, _, _, _, _, sID = UnitBuff(unit, i)
-        if not _ then break end
-        if sID == spellID then return count or 0 end
+        local name = UnitBuff(unit, i)
+        if not name then break end
+        
+        local id10 = select(10, UnitBuff(unit, i))
+        local id11 = select(11, UnitBuff(unit, i))
+        
+        if id10 == spellID or id11 == spellID then
+            -- count 在第3(Retail)或第4(Classic)位
+            local count3 = select(3, UnitBuff(unit, i))
+            local count4 = select(4, UnitBuff(unit, i))
+            -- 逻辑：通常 count 是个数字，如果是 0 或更大则返回
+            if type(count4) == "number" then return count4 end
+            if type(count3) == "number" then return count3 end
+            return 0
+        end
     end
     return 0
-end
-
-function Module:CheckBurstConditions()
-    -- 1. 必须是 Boss 目标 且 存活 (非 Boss 战不开启爆发)
-    if not self:IsBoss("target") or UnitIsDead("target") then return false end
-    
-    -- 2. 位于爆发技能范围内 (10码参考，对齐神圣风暴和审判)
-    if not self:IsInRange(20271) then return false end
-
-    return true
-end
-
-function Module:CheckAvengingWrath()
-    -- 判断复仇之怒技能可用性
-    if not self:IsSpellReady(31884) then return false end
-    
-    -- 1. 虔诚 (1298725) 存在五层 (复仇之怒特有判断)
-    if self:GetBuffStacks("player", 1298725) < 5 then return false end
-
-    -- 2. 使用统一的爆发前置判断函数 (Boss 战、目标、距离)
-    if self:CheckBurstConditions() then
-        return true, "target"
-    end
-    return false
 end
 
 function Module:GetBuffTimeLeft(unit, spellID)
+    if not unit or not spellID then return 0 end
     for i = 1, 40 do
-        local _, _, _, _, _, expirationTime, _, _, _, sID = UnitBuff(unit, i)
-        if not _ then break end
-        if sID == spellID then
+        local name = UnitBuff(unit, i)
+        if not name then break end
+        
+        local id10 = select(10, UnitBuff(unit, i))
+        local id11 = select(11, UnitBuff(unit, i))
+        
+        if id10 == spellID or id11 == spellID then
+            -- expirationTime 在第6(Retail)或第7(Classic)位
+            local exp6 = select(6, UnitBuff(unit, i))
+            local exp7 = select(7, UnitBuff(unit, i))
+            local expTime = type(exp7) == "number" and exp7 or (type(exp6) == "number" and exp6 or 0)
+            
             local now = GetTime()
-            return (expirationTime > now) and (expirationTime - now) or 0
+            return (expTime > now) and (expTime - now) or 0
         end
     end
     return 0
 end
 
-function Module:CheckLightsPlea()
-    -- 1. 技能可用性
-    if not self:IsSpellReady(1298728) then return false end
+function Module:HasDebuff(unit, spellID)
+    if not unit or not spellID then return false end
+    for i = 1, 40 do
+        local name = UnitDebuff(unit, i)
+        if not name then break end
+        
+        local id10 = select(10, UnitDebuff(unit, i))
+        local id11 = select(11, UnitDebuff(unit, i))
+        if id10 == spellID or id11 == spellID then return true end
+        
+        local targetName = GetSpellInfo(spellID)
+        if targetName and name == targetName then return true end
+    end
+    return false
+end
+
+-- ============================================
+-- 技能定义与逻辑
+-- ============================================
+
+Module.SkillDefinitions = {
+    -- 爆发
+    { actionName = "avenging_wrath", spellID = 31884, priority = 1, checkFunc = function(self, p) return self:CheckAvengingWrath(p) end, displayName = "复仇之怒" },
+    { actionName = "lights_plea", spellID = 1298728, priority = 1.1, checkFunc = function(self, p) return self:CheckLightsPlea(p) end, displayName = "祈求圣光" },
+
+    { actionName = "hammer_of_wrath", spellID = 48806, priority = 2, checkFunc = function(self, p) return self:CheckHammerOfWrath(p) end, displayName = "愤怒之锤" },
     
-    -- 2. 处于爆发前置状态
+    -- 十字军优先模式 (正义 < 5层时)
+    { actionName = "crusader_strike_high", spellID = 35395, priority = 3, checkFunc = function(self, p) return self:CheckCrusaderStrike(true, p) end, displayName = "十字军打击(叠层优先)" },
+    { actionName = "divine_storm_low",    spellID = 53385, priority = 3.1, checkFunc = function(self, p) return self:CheckDivineStorm(false, p) end, displayName = "神圣风暴(填充)" },
+
+    -- 神圣风暴优先模式 (正义 >= 5层时)
+    { actionName = "divine_storm_high",   spellID = 53385, priority = 3.5, checkFunc = function(self, p) return self:CheckDivineStorm(true, p) end, displayName = "神圣风暴(爆发优先)" },
+    { actionName = "crusader_strike_low",  spellID = 35395, priority = 3.6, checkFunc = function(self, p) return self:CheckCrusaderStrike(false, p) end, displayName = "十字军打击(填充)" },
+
+    { actionName = "exorcism_high",    spellID = 48801, priority = 4.5, checkFunc = function(self, p) return self:CheckExorcism(true, p) end, displayName = "驱邪术(特殊)" },
+    { actionName = "judgement_of_light", spellID = 20271, priority = 5, checkFunc = function(self, p) return self:CheckJudgement(20271, p) end, displayName = "圣光审判" },
+    { actionName = "judgement_of_wisdom", spellID = 53408, priority = 5.1, checkFunc = function(self, p) return self:CheckJudgement(53408, p) end, displayName = "智慧审判" },
+    { actionName = "exorcism",        spellID = 48801, priority = 6, checkFunc = function(self, p) return self:CheckExorcism(false, p) end, displayName = "驱邪术" },
+    { actionName = "consecration",    spellID = 48819, priority = 7, checkFunc = function(self, p) return self:CheckConsecration(p) end, displayName = "奉献" },
+    
+    -- 额外补充
+    { actionName = "lionheart",      spellID = 20599, priority = 8, checkFunc = function(self, p) return self:CheckLionheart(p) end, displayName = "狮心" },
+}
+
+function Module:CheckBurstConditions()
+    if not self:IsBoss("target") or UnitIsDead("target") then return false end
+    local minR, maxR = self:GetUnitRange("target")
+    if not maxR or maxR > 10 then return false end
+    return true
+end
+
+function Module:CheckAvengingWrath(p)
+    if not self:IsSpellReady(31884, p) then return false end
+    
+    -- 圣光裁决 (1298723) 存在
+    if not self:HasBuff("player", 1298723) then 
+        self:SetHUDReason("avenging_wrath", false, "缺失圣光裁决")
+        return false 
+    end
+
+    if self:CheckBurstConditions() then
+        self:SetHUDReason("avenging_wrath", true, "爆发开启")
+        return true, "target"
+    end
+    return false
+end
+
+function Module:CheckLightsPlea(p)
+    if not self:IsSpellReady(1298728, p) then return false end
     if not self:CheckBurstConditions() then return false end
     
-    -- 3. 玩家没有在移动 (速度为 0) - 祈求圣光特有要求
-    if GetUnitSpeed("player") > 0 then return false end
+    -- 祈求圣光特有要求：不移动，正义5层且>5s，无圣光重担
+    if GetUnitSpeed("player") > 0 then self:SetHUDReason("lights_plea", false, "移动中"); return false end
+    if self:GetBuffStacks("player", 1299090) < 5 then self:SetHUDReason("lights_plea", false, "正义未满5层"); return false end
+    if self:GetBuffTimeLeft("player", 1299090) <= 5 then self:SetHUDReason("lights_plea", false, "正义时间不足"); return false end
+    if self:HasDebuff("player", 1299086) then self:SetHUDReason("lights_plea", false, "已有圣光重担"); return false end
     
-    -- 4. 玩家有五层正义 (1299090) 且持续时间超过 5 秒
-    if self:GetBuffStacks("player", 1299090) < 5 then return false end
-    if self:GetBuffTimeLeft("player", 1299090) <= 5 then return false end
-    
-    -- 5. 玩家没有 debuff 圣光重担 (1299086)
-    if self:HasDebuff("player", 1299086) then return false end
-    
+    self:SetHUDReason("lights_plea", true, "触发祈求")
     return true, "player"
 end
 
-function Module:CheckDivinePlea()
-    if not self:IsSpellReady(54428) then return false end
-    
-    local manaPct = self:GetUnitManaPercent("player")
-    
-    -- 爆发期特殊处理：蓝量超过 20% 时不使用神圣恳求 (防止减疗影响爆发)
-    if self:CheckBurstConditions() then
-        if manaPct > 20 then return false end
-    end
-    
-    -- 基础判断：魔法值低于 50% 时推荐
-    if manaPct < 50 then return true, "player" end
-    
-    return false
+function Module:CheckHammerOfWrath(p)
+    if not UnitExists("target") or UnitIsDead("target") then self:SetHUDReason("hammer_of_wrath", false, "无目标"); return false end
+    local ready, reason = self:IsSpellReady(48806, p)
+    if not ready then self:SetHUDReason("hammer_of_wrath", false, reason); return false end
+    if UnitHealth("target") / UnitHealthMax("target") * 100 >= 20 then self:SetHUDReason("hammer_of_wrath", false, "血量>20%"); return false end
+    self:SetHUDReason("hammer_of_wrath", true, "斩杀期"); return true, "target"
 end
 
-function Module:CheckDivineStorm(requireStacks)
-    -- 1. 基础可用性 (存活 + 10码大范围判定作为判定区)
-    -- 注意：神圣风暴实际距离为 8 码，在此使用 10 码审判作为近似锚点
-    if not UnitExists("target") or UnitIsDead("target") then return false end
-    if not self:IsInRange(20271) then return false end
-    if not self:IsSpellReady(53385) then return false end
-
-    -- 2. 距离与多目标优先级动态逻辑 (8码 vs 20码)
-    local targets8yd = 0
-    local targetsTotal = 0
-
-    if Hekili and Hekili.State then
-        -- active_enemies 通常判定范围为 8-10 码
-        targets8yd = Hekili.State.active_enemies or 1
-        -- enemies 通常包含所有正在战斗的敌方目标 (近似 20-40 码)
-        targetsTotal = Hekili.State.enemies or 1
-    end
-
-    -- 核心逻辑：
-    -- 情况 A: 超过 1 个目标位于 8 码内 -> 立即优先推荐神圣风暴
-    if targets8yd > 1 then
-        -- 继续执行层数判定
-
-    -- 情况 B: 只有 1 个目标位于 8 码内
-    elseif targets8yd == 1 then
-        -- 但如果 20 码内有超过 1 个目标 -> 优先推荐审判 (隐藏风暴，等待玩家拉近距离)
-        if targetsTotal > 1 then
-            return false
-        end
-        -- 如果 20 码内也只有这一个目标 -> 优先神圣风暴
-    end
-
-    -- 3. 原有的动态层数逻辑 (正义层数判定)
+function Module:CheckCrusaderStrike(highMode, p)
+    local action = highMode and "crusader_strike_high" or "crusader_strike_low"
+    if not UnitExists("target") or UnitIsDead("target") then self:SetHUDReason(action, false, "无目标"); return false end
+    
     local stacks = self:GetBuffStacks("player", 1299090)
-    if requireStacks then
-        -- 高优先级分支：仅在 >= 5层时触发
-        return stacks >= 5, "player"
-    else
-        -- 低优先级分支：仅在 < 5层时作为填充触发
-        return stacks < 5, "player"
-    end
-end
-function Module:CheckCrusaderStrike(requireHighPriority)
-    -- 1. 基础可用性 (存活 + 5码近战判定)
-    if not self:CheckMeleeConditions(35395) then return false end
+    local should = highMode and (stacks < 5) or (stacks >= 5)
+    if not should then return false end
+
+    local minR, maxR = self:GetUnitRange("target")
+    if not maxR or maxR > 5 then self:SetHUDReason(action, false, "超出5码"); return false end
+    local ready, reason = self:IsSpellReady(35395, p)
+    if not ready then self:SetHUDReason(action, false, reason); return false end
     
-    -- 2. 动态层数逻辑
+    self:SetHUDReason(action, true, "就绪")
+    return true, "target"
+end
+
+function Module:CheckDivineStorm(highMode, p)
+    local action = highMode and "divine_storm_high" or "divine_storm_low"
+    if not UnitExists("target") or UnitIsDead("target") then self:SetHUDReason(action, false, "无目标"); return false end
+
     local stacks = self:GetBuffStacks("player", 1299090)
-    if requireHighPriority then
-        -- 高优先级分支：仅在 < 5层时触发 (为了快速叠层)
-        return stacks < 5, "target"
-    else
-        -- 低优先级分支：仅在 >= 5层时作为填充触发
-        return stacks >= 5, "target"
-    end
+    local should = highMode and (stacks >= 5) or (stacks < 5)
+    if not should then return false end
+
+    local minR, maxR = self:GetUnitRange("target")
+    if not maxR or maxR > 5 then self:SetHUDReason(action, false, "超出5码"); return false end
+    local ready, reason = self:IsSpellReady(53385, p)
+    if not ready then self:SetHUDReason(action, false, reason); return false end
+    
+    self:SetHUDReason(action, true, "就绪")
+    return true, "player"
 end
 
-function Module:CheckMeleeConditions(id)
-    -- 1. 目标存活
-    if not UnitExists("target") or UnitIsDead("target") then return false end
-    
-    -- 2. 纯近战范围判断 (5码参考)
-    if not self:IsInRange(id) then return false end
-    
-    -- 3. 技能可用 (冷却结束)
-    if not self:IsSpellReady(id) then return false end
-    
-    return true
-end
-
-function Module:CheckHammerOfWrath()
-    -- 基础判断：远程条件 (敌对、存活、距离、可用)
-    -- 愤怒之锤原生即为 30 码射程，通过 CheckRemoteConditions 自动校验
-    if not self:CheckRemoteConditions(48806) then return false end
-    
-    -- 特有判断：生命值 < 20%
-    if self:GetUnitHealthPercent("target") < 20 then
-        return true, "target"
-    end
-    return false
-end
-
-function Module:GetSpellCooldownLeft(id)
-    local start, duration = GetSpellCooldown(id)
-    if not start or start == 0 then return 0 end
-    local cd = start + duration - GetTime()
-    return cd > 0 and cd or 0
-end
-
-function Module:CheckRemoteConditions(id, rangeLimit)
-    -- 1. 当前目标敌对且存活
-    if not UnitExists("target") or UnitIsDead("target") or not UnitCanAttack("player", "target") then 
-        return false 
-    end
-    
-    -- 2. 距离判断
-    local spellName = GetSpellInfo(id)
-    if not spellName then return false end
-    
-    -- 基础射程检查
-    if IsSpellInRange(spellName, "target") ~= 1 then return false end
-    
-    -- 额外范围参数控制 (如果有特定要求，比如 10/30 码)
-    -- 这里通过 LibRangeCheck 或基础 IsSpellInRange 已经涵盖了技能原生范围
-    -- 如果需要强制数值限制，通常依赖于特定技能的射程参考
-    
-    -- 3. 技能可用
-    if not self:IsSpellReady(id) then return false end
-    
-    return true
-end
-
-function Module:CheckJudgement(id)
-    -- 基础远程条件 (敌对、存活、距离、可用)
-    if not self:CheckRemoteConditions(id) then return false end
-    
-    -- 逻辑：作为填充技能，不再强制要求十字军/风暴在CD（已通过优先级表控制）
-    local manaPct = self:GetUnitManaPercent("player")
-    if id == 20271 then -- 圣光审判
-        return manaPct >= 80, "target"
-    elseif id == 53408 then -- 智慧审判
-        return manaPct < 80, "target"
-    end
-    
-    return false
-end
-
-function Module:CheckExorcism(isHighPriority)
-    -- 1. 基础可用性与远程条件 (敌对、存活、30码射程、可用)
-    if not self:CheckRemoteConditions(48801) then return false end
-    
-    -- 2. 检查战争艺术触发 (59578)
-    if not self:HasBuff("player", 59578) then return false end
-
-    -- 3. 动态优先级逻辑
+function Module:CheckExorcism(high, p)
+    local action = high and "exorcism_high" or "exorcism"
+    if not self:HasBuff("player", 59578) then self:SetHUDReason(action, false, "无战争艺术"); return false end
+    local ready, reason = self:IsSpellReady(48801, p)
+    if not ready then self:SetHUDReason(action, false, reason); return false end
     local type = UnitCreatureType("target")
-    local isUndeadOrDemon = (type == "Undead" or type == "Demon" or type == "亡灵" or type == "恶魔")
-    
-    if isHighPriority then
-        -- 高优先级分支：仅对亡灵/恶魔返回 True
-        return isUndeadOrDemon, "target"
-    else
-        -- 普通优先级分支：仅对非亡灵/恶魔返回 True (防止双重推荐)
-        return not isUndeadOrDemon, "target"
-    end
+    local isSpecial = (type == "Undead" or type == "Demon" or type == "亡灵" or type == "恶魔")
+    local should = high and isSpecial or (not high and not isSpecial)
+    self:SetHUDReason(action, should, isSpecial and "亡灵/恶魔" or "普通目标")
+    return should, "target"
 end
 
-function Module:CheckMeleeSpell(id)
-    -- 基础判断：近战条件 (存活、距离、可用)
-    if self:CheckMeleeConditions(id) then
-        return true, "target"
-    end
-    return false
+function Module:CheckJudgement(id, p)
+    local action = id == 20271 and "judgement_of_light" or "judgement_of_wisdom"
+    local ready, reason = self:IsSpellReady(id, p)
+    if not ready then self:SetHUDReason(action, false, reason); return false end
+    local manaPct = (UnitPower("player") / UnitPowerMax("player") * 100)
+    local should = (id == 20271 and manaPct >= 80) or (id == 53408 and manaPct < 80)
+    self:SetHUDReason(action, should, string.format("蓝量%.0f%%", manaPct))
+    return should, "target"
 end
 
-function Module:CheckConsecration()
-    -- 1. 基础可用性判断
-    if not self:IsSpellReady(48819) then return false end
-    
-    -- 2. 距离判断 (AOE技能，对齐10码参考)
-    if not self:IsInRange(20271) or UnitIsDead("target") then return false end
-    
-    -- 3. 统一蓝量检查：40% 保底
-    if self:GetUnitManaPercent("player") < 40 then return false end
-
-    -- 获取核心技能冷却状态
-    local dsCD = self:GetSpellCooldownLeft(53385)
-    
-    -- 4. 多目标 AOE 场景判断
-    local numTargets = 1
-    if Hekili and Hekili.State and Hekili.State.active_enemies then
-        numTargets = Hekili.State.active_enemies
-    end
-
-    if numTargets > 2 then
-        -- 群体：TTD > 5秒 且 神圣风暴在CD
-        if self:GetTTD() > 5 and dsCD > 0 then
-            return true, "player"
-        end
-    end
-
-    -- 5. 单目标填充场景：核心打击技能和审判都在冷却
-    local csCD = self:GetSpellCooldownLeft(35395)
-    local exoCD = self:GetSpellCooldownLeft(48801)
-    local judgeL_CD = self:GetSpellCooldownLeft(20271)
-    local judgeW_CD = self:GetSpellCooldownLeft(53408)
-
-    if csCD > 0 and dsCD > 0 and exoCD > 0 and judgeL_CD > 0 and judgeW_CD > 0 then
-        return true, "player"
-    end
-    
-    return false
+function Module:CheckConsecration(p)
+    local ready, reason = self:IsSpellReady(48819, p)
+    if not ready then self:SetHUDReason("consecration", false, reason); return false end
+    local minR, maxR = self:GetUnitRange("target")
+    if not maxR or maxR > 5 then self:SetHUDReason("consecration", false, "超出5码"); return false end
+    self:SetHUDReason("consecration", true, "地毯填充"); return true, "player"
 end
 
-function Module:CheckHolyWrath()
-    -- 1. 基础可用性判断
-    if not self:IsSpellReady(48817) then return false end
-    
-    -- 2. 检查神圣风暴 (53385) 是否在冷却中
-    local dsCD = self:GetSpellCooldownLeft(53385)
-    if dsCD <= 0 then return false end
-
-    -- 3. 环境判断：存活、10码范围(审判参考)、敌对
-    if self:IsInRange(20271) and not UnitIsDead("target") and UnitCanAttack("player", "target") then
-        local type = UnitCreatureType("target")
-        if type == "Undead" or type == "Demon" or type == "亡灵" or type == "恶魔" then
-            return true, "player"
-        end
-    end
-    return false
-end
-
-function Module:CheckDivineShield()
-    if not self:IsSpellReady(642) then return false end
-    -- 基础判断：生命值 < 20%
-    if self:GetUnitHealthPercent("player") < 20 then
-        if not self:HasDebuff("player", 25771) then return true, "player" end
-    end
-    return false
-end
-
-function Module:CheckHandOfSalvation()
-    if not self:IsSpellReady(1038) then return false end
-    -- 这里可以添加仇恨检查
-    return false
-end
-
-function Module:CheckLionheart()
-    -- 基础判断：Boss 战且 TTD > 10秒
+function Module:CheckLionheart(p)
     if not self:IsBoss("target") or self:GetTTD() < 10 then return false end
-    
     local count = GetItemCount(20599)
-    if count > 0 and IsUsableItem(20599) then
+    if count > 0 then
         local start, duration = GetItemCooldown(20599)
-        if start == 0 then return true, "player" end
+        if start == 0 then
+            self:SetHUDReason("lionheart", true, "推荐使用")
+            return true, "player"
+        end
     end
     return false
 end
 
 -- ============================================
--- 辅助函数与插入逻辑
+-- 插入队列
 -- ============================================
-
-function Module:GetUnitHealthPercent(unit)
-    local h, m = UnitHealth(unit), UnitHealthMax(unit)
-    return (m > 0) and (h / m * 100) or 100
-end
-
-function Module:GetUnitManaPercent(unit)
-    local m, mx = UnitPower(unit), UnitPowerMax(unit)
-    return (mx > 0) and (m / mx * 100) or 100
-end
-
-function Module:HasBuff(unit, spellID)
-    for i = 1, 40 do
-        local _, _, _, _, _, expirationTime, _, _, _, sID = UnitBuff(unit, i)
-        if not _ then break end
-        if sID == spellID then return true end
-    end
-    return false
-end
-
-function Module:HasDebuff(unit, spellID)
-    for i = 1, 40 do
-        local _, _, _, _, _, expirationTime, _, _, _, sID = UnitDebuff(unit, i)
-        if not _ then break end
-        if sID == spellID then return true end
-    end
-    return false
-end
-
-function Module:IsSpellReady(id)
-    local s, d = GetSpellCooldown(id)
-    -- 允许 1.5 秒的提前推荐缓冲，解决手感延迟问题
-    return (not s or s == 0 or (s + d - GetTime() <= 1.5))
-end
-
-function Module:IsLearned(name, id)
-    return IsSpellKnown(id) or GetSpellInfo(name) ~= nil
-end
 
 function Module:InsertPaladinSkills()
     if not Hekili or not Hekili.DisplayPool then return end
     
-    -- 更新 TTD 数据
     self:UpdateTTD()
-    
-    -- 检查整体开关
-    if not HekiliHelper.DB or not HekiliHelper.DB.profile or not HekiliHelper.DB.profile.retPaladin or not HekiliHelper.DB.profile.retPaladin.enabled then
-        return
-    end
+
+    if self.HUDFrame then if HekiliHelper.DebugEnabled then self.HUDFrame:Show() else self.HUDFrame:Hide() end end
+    if not HekiliHelper.DB or not HekiliHelper.DB.profile or not HekiliHelper.DB.profile.retPaladin or not HekiliHelper.DB.profile.retPaladin.enabled then return end
 
     for dispName, UI in pairs(Hekili.DisplayPool) do
         local lowerName = dispName:lower()
         if (lowerName == "primary" or lowerName == "aoe") and UI.Active and UI.alpha > 0 then
             local Queue = UI.Recommendations
             if not Queue then return end
-            
-            -- 完全清除之前的自定义推荐，防止残留
-            for i = 1, 10 do
-                if Queue[i] and Queue[i].isRetPaladinSkill then
-                    Queue[i] = nil
-                end
-            end
+            for i = 1, 10 do if Queue[i] and Queue[i].isRetPaladinSkill then Queue[i] = nil end end
 
             local skillsFound = 0
             for _, skillDef in ipairs(self.SkillDefinitions) do
-                if self:IsLearned(skillDef.displayName, skillDef.spellID) or (skillDef.actionName == "lionheart" and GetItemCount(20599) > 0) then
-                    local should, target = skillDef.checkFunc(self)
+                local isLearned = self:IsLearned(skillDef.displayName, skillDef.spellID)
+                if skillDef.actionName == "lionheart" then
+                    isLearned = GetItemCount(20599) > 0
+                end
+
+                if isLearned then
+                    local should, target = skillDef.checkFunc(self, skillDef.priority)
                     if should and skillsFound < 4 then
                         skillsFound = skillsFound + 1
-                        
                         local ability = Hekili.Class.abilities[skillDef.actionName]
                         if not ability then
                             local n, _, t
@@ -530,39 +461,17 @@ function Module:InsertPaladinSkills()
                             else
                                 n, _, t = GetSpellInfo(skillDef.spellID)
                             end
-                            
-                            if n then
-                                Hekili.Class.abilities[skillDef.actionName] = { 
-                                    key = skillDef.actionName, name = n, texture = t, id = skillDef.spellID, cast = 0, gcd = "off" 
-                                }
-                                ability = Hekili.Class.abilities[skillDef.actionName]
-                            end
+                            if n then Hekili.Class.abilities[skillDef.actionName] = { key = skillDef.actionName, name = n, texture = t, id = skillDef.spellID, cast = 0, gcd = "off" }; ability = Hekili.Class.abilities[skillDef.actionName] end
                         end
-                        
                         if ability then
                             Queue[skillsFound] = Queue[skillsFound] or {}
                             local slot = Queue[skillsFound]
-                            slot.actionName = skillDef.actionName
-                            slot.actionID = skillDef.spellID
-                            slot.texture = ability.texture
-                            slot.isRetPaladinSkill = true
-                            slot.display = dispName
-                            slot.time = 0
-                            slot.exact_time = GetTime()
-                            UI.NewRecommendations = true
+                            slot.actionName = skillDef.actionName; slot.actionID = skillDef.spellID; slot.texture = ability.texture; slot.isRetPaladinSkill = true; slot.display = dispName; slot.time = 0; slot.exact_time = GetTime(); UI.NewRecommendations = true
                         end
-                    end
-                end
-            end
-
-            -- 如果插入了技能，确保后续槽位被清空
-            if skillsFound > 0 then
-                for i = skillsFound + 1, 10 do
-                    if Queue[i] and Queue[i].isRetPaladinSkill then
-                        Queue[i] = nil
                     end
                 end
             end
         end
     end
+    self:UpdateHUDText()
 end
