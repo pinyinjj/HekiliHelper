@@ -278,6 +278,9 @@ function HekiliHelper:OnInitialize()
             deathKnight = {
                 enabled = (playerClass == "DEATHKNIGHT"),
             },
+            retPaladin = {
+                enabled = (playerClass == "PALADIN"),
+            },
             modeSwitcher = {
                 enabled = true,
                 offsetX = 5,
@@ -336,6 +339,13 @@ function HekiliHelper:OnInitialize()
         self:DebugPrint("|cFF00FF00[HekiliHelper]|r 创建DeathKnightSkills模块对象")
     else
         self:DebugPrint("|cFF00FF00[HekiliHelper]|r DeathKnightSkills模块对象已存在")
+    end
+
+    if not self.RetPaladinSkills then
+        self.RetPaladinSkills = {}
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r 创建RetPaladinSkills模块对象")
+    else
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r RetPaladinSkills模块对象已存在")
     end
     
     if not self.ModeSwitcher then
@@ -482,6 +492,11 @@ function HekiliHelper:InitializeModules()
     -- DK模块（仅DK，TTD作为传染的依赖功能在DeathKnightSkills内按需初始化）
     if playerClass == "DEATHKNIGHT" then
         table.insert(modules, { name = "DeathKnightSkills", ref = self.DeathKnightSkills })
+    end
+
+    -- 惩戒骑模块
+    if playerClass == "PALADIN" then
+        table.insert(modules, { name = "RetPaladinSkills", ref = self.RetPaladinSkills })
     end
 
     for _, mod in ipairs(modules) do

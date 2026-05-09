@@ -702,6 +702,48 @@ function Module:GetOptions()
                 }
             },
             
+            retPaladin = {
+                type = "group",
+                name = "惩戒骑士",
+                order = 3.4,
+                args = {
+                    header = {
+                        type = "header",
+                        name = "惩戒骑士设置",
+                        order = 1,
+                        width = "full"
+                    },
+                    
+                    enabled = {
+                        type = "toggle",
+                        name = "启用",
+                        desc = "启用或禁用惩戒骑士技能推荐功能。",
+                        order = 10,
+                        width = "full",
+                        get = function()
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return true
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.retPaladin then
+                                db.retPaladin = { enabled = true }
+                            end
+                            return db.retPaladin.enabled ~= false
+                        end,
+                        set = function(info, val)
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.retPaladin then
+                                db.retPaladin = {}
+                            end
+                            db.retPaladin.enabled = val
+                        end
+                    },
+                }
+            },
+            
             about = {
                 type = "group",
                 name = "关于",

@@ -40,7 +40,7 @@ end
 
 -- 模块初始化
 function Module:Initialize()
-    if not Hekili then
+    if not Hekili or not Hekili.Update then
         return false
     end
     
@@ -48,10 +48,8 @@ function Module:Initialize()
     local success = HekiliHelper.HookUtils.Wrap(Hekili, "Update", function(oldFunc, self, ...)
         local result = oldFunc(self, ...)
         
-        -- 在 Hekili 计算完后立即介入
-        C_Timer.After(0.001, function()
-            Module:InsertBlankIcon()
-        end)
+        -- 在 Hekili 计算完后立即介入，移除 Timer 以防闪烁
+        Module:InsertBlankIcon()
         
         return result
     end)

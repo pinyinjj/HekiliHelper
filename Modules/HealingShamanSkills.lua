@@ -19,9 +19,8 @@ function Module:Initialize()
     -- Hook Hekili.Update
     local success = HekiliHelper.HookUtils.Wrap(Hekili, "Update", function(oldFunc, self, ...)
         local result = oldFunc(self, ...)
-        C_Timer.After(0.001, function()
-            Module:InsertHealingSkills()
-        end)
+        -- 移除 Timer，解决潜在闪烁
+        Module:InsertHealingSkills()
         return result
     end)
     
@@ -259,6 +258,14 @@ function Module:InsertHealingSkills()
         if (lowerName == "primary" or lowerName == "aoe") and UI.Active and UI.alpha > 0 then
             local Queue = UI.Recommendations
             if not Queue then return end
+
+            -- 清除旧标志，防止残留
+            for i = 1, 10 do
+                if Queue[i] then 
+                    Queue[i].isHealingShamanSkill = nil 
+                end
+            end
+
             for _, skillDef in ipairs(self.SkillDefinitions) do
                 if self:IsLearned(skillDef.displayName, skillDef.spellID) then
                     local should, target = skillDef.checkFunc(self)
@@ -269,11 +276,8 @@ function Module:InsertHealingSkills()
                             Hekili.Class.abilities[skillDef.actionName] = { key = skillDef.actionName, name = n, texture = t, id = skillDef.spellID, cast = 0, gcd = "off" }
                             ability = Hekili.Class.abilities[skillDef.actionName]
                         end
+                        
                         Queue[1] = Queue[1] or {}
-                        if not Queue[1].isHealingShamanSkill then
-                            Queue[1].originalRecommendation = {}
-                            for k, v in pairs(Queue[1]) do Queue[1].originalRecommendation[k] = v end
-                        end
                         local slot = Queue[1]
                         slot.actionName = skillDef.actionName
                         slot.actionID = skillDef.spellID

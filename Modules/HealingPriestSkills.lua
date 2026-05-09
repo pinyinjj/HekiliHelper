@@ -23,16 +23,15 @@ local Module = HekiliHelper.HealingPriestSkills
 
 -- 模块初始化
 function Module:Initialize()
-    if not Hekili then 
+    if not Hekili or not Hekili.Update then 
         return false 
     end
     
     -- Hook Hekili.Update
     local success = HekiliHelper.HookUtils.Wrap(Hekili, "Update", function(oldFunc, self, ...)
         local result = oldFunc(self, ...)
-        C_Timer.After(0.001, function()
-            Module:InsertHealingSkills()
-        end)
+        -- 移除 Timer，解决潜在闪烁
+        Module:InsertHealingSkills()
         return result
     end)
     
@@ -314,9 +313,9 @@ function Module:CheckCircleOfHealing()
     
     local units = IsInRaid() and 40 or (IsInGroup() and 5 or 1)
     
-    for i = 1, units do
-        local u = (units == 1) and "player" or (IsInRaid() and "raid"..i or (i==5 and "player" or "party"..i))
-        if self:IsFriendlyTarget(u) and self:GetMissingHealth(u) >= threshold then
+    for i = 1, 40 do
+        local u = (IsInRaid() and "raid"..i or (i<=4 and "party"..i or (i==5 and "player" or nil)))
+        if u and self:IsFriendlyTarget(u) and self:GetMissingHealth(u) >= threshold then
             count = count + 1
         end
     end
@@ -457,9 +456,11 @@ function Module:InsertHealingSkills()
             local Queue = UI.Recommendations
             if not Queue then return end
             
-            -- 清除旧牧师技能
-            for i = 1, 4 do
-                if Queue[i] and Queue[i].isHealingPriestSkill then Queue[i] = nil end
+            -- 清除旧标志，防止残留
+            for i = 1, 10 do
+                if Queue[i] then 
+                    Queue[i].isHealingPriestSkill = nil 
+                end
             end
             
             local skillsFound = 0
