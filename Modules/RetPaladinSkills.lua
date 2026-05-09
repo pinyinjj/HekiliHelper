@@ -211,12 +211,38 @@ function Module:CheckDivinePlea()
 end
 
 function Module:CheckDivineStorm(requireStacks)
-    -- 1. 基础可用性 (存活 + 10码判定)
+    -- 1. 基础可用性 (存活 + 10码大范围判定作为判定区)
+    -- 注意：神圣风暴实际距离为 8 码，在此使用 10 码审判作为近似锚点
     if not UnitExists("target") or UnitIsDead("target") then return false end
     if not self:IsInRange(20271) then return false end
     if not self:IsSpellReady(53385) then return false end
-    
-    -- 2. 动态层数逻辑
+
+    -- 2. 距离与多目标优先级动态逻辑 (8码 vs 20码)
+    local targets8yd = 0
+    local targetsTotal = 0
+
+    if Hekili and Hekili.State then
+        -- active_enemies 通常判定范围为 8-10 码
+        targets8yd = Hekili.State.active_enemies or 1
+        -- enemies 通常包含所有正在战斗的敌方目标 (近似 20-40 码)
+        targetsTotal = Hekili.State.enemies or 1
+    end
+
+    -- 核心逻辑：
+    -- 情况 A: 超过 1 个目标位于 8 码内 -> 立即优先推荐神圣风暴
+    if targets8yd > 1 then
+        -- 继续执行层数判定
+
+    -- 情况 B: 只有 1 个目标位于 8 码内
+    elseif targets8yd == 1 then
+        -- 但如果 20 码内有超过 1 个目标 -> 优先推荐审判 (隐藏风暴，等待玩家拉近距离)
+        if targetsTotal > 1 then
+            return false
+        end
+        -- 如果 20 码内也只有这一个目标 -> 优先神圣风暴
+    end
+
+    -- 3. 原有的动态层数逻辑 (正义层数判定)
     local stacks = self:GetBuffStacks("player", 1299090)
     if requireStacks then
         -- 高优先级分支：仅在 >= 5层时触发
@@ -226,7 +252,6 @@ function Module:CheckDivineStorm(requireStacks)
         return stacks < 5, "player"
     end
 end
-
 function Module:CheckCrusaderStrike(requireHighPriority)
     -- 1. 基础可用性 (存活 + 5码近战判定)
     if not self:CheckMeleeConditions(35395) then return false end
