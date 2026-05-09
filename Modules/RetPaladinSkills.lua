@@ -483,7 +483,8 @@ end
 
 function Module:IsSpellReady(id)
     local s, d = GetSpellCooldown(id)
-    return (not s or s == 0 or (s + d - GetTime() <= 0))
+    -- 允许 1.5 秒的提前推荐缓冲，解决手感延迟问题
+    return (not s or s == 0 or (s + d - GetTime() <= 1.5))
 end
 
 function Module:IsLearned(name, id)
@@ -507,10 +508,10 @@ function Module:InsertPaladinSkills()
             local Queue = UI.Recommendations
             if not Queue then return end
             
-            -- 清除旧标志，防止残留（不要设为 nil，防止 Hekili 渲染报错）
+            -- 完全清除之前的自定义推荐，防止残留
             for i = 1, 10 do
-                if Queue[i] then 
-                    Queue[i].isRetPaladinSkill = nil 
+                if Queue[i] and Queue[i].isRetPaladinSkill then
+                    Queue[i] = nil
                 end
             end
 
@@ -550,6 +551,15 @@ function Module:InsertPaladinSkills()
                             slot.exact_time = GetTime()
                             UI.NewRecommendations = true
                         end
+                    end
+                end
+            end
+
+            -- 如果插入了技能，确保后续槽位被清空
+            if skillsFound > 0 then
+                for i = skillsFound + 1, 10 do
+                    if Queue[i] and Queue[i].isRetPaladinSkill then
+                        Queue[i] = nil
                     end
                 end
             end
