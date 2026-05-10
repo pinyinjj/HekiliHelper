@@ -84,8 +84,10 @@ function Module:UpdateHUDText()
     elseif maxR then rangeStr = string.format("0-%d码", maxR) end
 
     -- 判定当前模式显示
-    local isExecute = UnitExists("target") and not UnitIsDead("target") and (UnitHealth("target") / UnitHealthMax("target") * 100) < 20
-    local isAOE = self:CountEnemiesInRange(5) > 2
+    local enemyCount5 = self:CountEnemiesInRange(5)
+    local enemyCount8 = self:CountEnemiesInRange(8)
+    local isExecute = self:IsValidEnemy("target") and (UnitHealth("target") / UnitHealthMax("target") * 100) < 20
+    local isAOE = enemyCount5 > 2
     local modeStr = "|cFF00FF00单体|r"
     if isExecute then modeStr = "|cFFFF0000斩杀|r"
     elseif isAOE then modeStr = "|cFFFFFF00AOE|r" end
@@ -96,7 +98,7 @@ function Module:UpdateHUDText()
     if not curName then curName, _, _, _, _, _, _, curID = UnitChannelInfo("player") end
 
     table.insert(lines, string.format("|cFFFFFF00[全局状态]|r"))
-    table.insert(lines, string.format("当前模式: %s", modeStr))
+    table.insert(lines, string.format("当前模式: %s (5码:%d, 8码:%d)", modeStr, enemyCount5, enemyCount8))
     table.insert(lines, string.format("当前施法: %s(%s)", curName or "无", tostring(curID or "无")))
     table.insert(lines, string.format("恳求状态: %s", pleaReason))
     table.insert(lines, string.format("正义Buff(1299090): %d层", righteousnessStacks))
@@ -567,7 +569,7 @@ function Module:InsertPaladinSkills()
     
     self:UpdateTTD()
     local isExecute = self:IsValidEnemy("target") and (UnitHealth("target") / UnitHealthMax("target") * 100) < 20
-    local isAOE = self:CountEnemiesInRange(5) > 2
+    local isAOE = self:CountEnemiesInRange(8) > 2
     
     -- 准备排序列表
     local activeSkills = {}
