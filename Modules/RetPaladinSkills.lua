@@ -98,6 +98,9 @@ function Module:UpdateHUDText()
     if not curName then curName, _, _, _, _, _, _, curID = UnitChannelInfo("player") end
 
     table.insert(lines, string.format("|cFFFFFF00[全局状态]|r"))
+    local hpPct = UnitHealth("player") / UnitHealthMax("player") * 100
+    local mpPct = UnitPower("player") / UnitPowerMax("player") * 100
+    table.insert(lines, string.format("玩家状态: HP %.1f%% / MP %.1f%%", hpPct, mpPct))
     table.insert(lines, string.format("当前模式: %s (5码:%d, 8码:%d)", modeStr, enemyCount5, enemyCount8))
     table.insert(lines, string.format("当前施法: %s(%s)", curName or "无", tostring(curID or "无")))
     table.insert(lines, string.format("恳求状态: %s", pleaReason))
@@ -519,11 +522,19 @@ function Module:CheckJudgement(p)
     
     local ready, reason = self:IsSpellReady(spellID, p)
     if not ready then self:SetHUDReason("judgement", false, reason); return false end
-    self:SetHUDReason("judgement", true, "就绪"); return true, "target"
+    self:SetHUDReason("judgement", true, "就绪(" .. (spellID == 53408 and "智慧" or "圣光") .. ")"); 
+    return true, "target", spellID
 end
 
 function Module:CheckConsecration(p)
     if not self:IsValidEnemy("target") then self:SetHUDReason("consecration", false, "无有效敌人目标"); return false end
+    
+    local manaPct = (UnitPower("player") / UnitPowerMax("player") * 100)
+    if manaPct < 40 then
+        self:SetHUDReason("consecration", false, string.format("蓝量低(%.1f%% < 40%%)", manaPct))
+        return false
+    end
+
     local ready, reason = self:IsSpellReady(48819, p)
     if not ready then self:SetHUDReason("consecration", false, reason); return false end
     local minR, maxR = self:GetUnitRange("target")
@@ -614,22 +625,42 @@ function Module:InsertPaladinSkills()
                 if skillDef.priority >= 90 and hasNormalSkill then
                     -- Skip
                 else
-                    local should, target = skillDef.checkFunc(self, skillDef.priority)
+                    local should, target, customSpellID = skillDef.checkFunc(self, skillDef.priority)
                     if should and skillsFound < 4 then
                         skillsFound = skillsFound + 1
                         if skillDef.priority < 90 then hasNormalSkill = true end
                         
+                        local displayID = customSpellID or skillDef.spellID
                         local ability = Hekili.Class.abilities[skillDef.actionName]
+                        
+                        -- 如果有自定义 ID 且与默认 ID 不同，我们需要确保图标也更新
+                        local texture = ability and ability.texture
+                        if customSpellID and customSpellID ~= skillDef.spellID then
+                            _, _, texture = GetSpellInfo(customSpellID)
+                        end
+
                         if not ability then
                             local n, _, t
                             if skillDef.actionName == "lionheart" then n, _, _, _, _, _, _, _, _, t = GetItemInfo(20599)
-                            else n, _, t = GetSpellInfo(skillDef.spellID) end
-                            if n then Hekili.Class.abilities[skillDef.actionName] = { key = skillDef.actionName, name = n, texture = t, id = skillDef.spellID, cast = 0, gcd = "off" }; ability = Hekili.Class.abilities[skillDef.actionName] end
+                            else n, _, t = GetSpellInfo(displayID) end
+                            if n then 
+                                Hekili.Class.abilities[skillDef.actionName] = { key = skillDef.actionName, name = n, texture = t, id = displayID, cast = 0, gcd = "off" }
+                                ability = Hekili.Class.abilities[skillDef.actionName]
+                                texture = t
+                            end
                         end
+
                         if ability then
                             Queue[skillsFound] = Queue[skillsFound] or {}
                             local slot = Queue[skillsFound]
-                            slot.actionName = skillDef.actionName; slot.actionID = skillDef.spellID; slot.texture = ability.texture; slot.isRetPaladinSkill = true; slot.display = dispName; slot.time = 0; slot.exact_time = GetTime(); UI.NewRecommendations = true
+                            slot.actionName = skillDef.actionName; 
+                            slot.actionID = displayID; 
+                            slot.texture = texture or ability.texture; 
+                            slot.isRetPaladinSkill = true; 
+                            slot.display = dispName; 
+                            slot.time = 0; 
+                            slot.exact_time = GetTime(); 
+                            UI.NewRecommendations = true
                         end
                     end
                 end
