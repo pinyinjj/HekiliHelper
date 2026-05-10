@@ -1,6 +1,6 @@
 -- Modules/RetPaladinSkills.lua
 -- 惩戒骑士技能插入模块
--- 优化点：精准测距、智能缓冲让位、圣印叠层判定修复
+
 
 local HekiliHelper = _G.HekiliHelper
 if not HekiliHelper then return end
@@ -279,6 +279,10 @@ end
 Module.SkillDefinitions = {
     -- 爆发
     { actionName = "avenging_wrath", spellID = 31884, priority = 1, checkFunc = function(self, p) return self:CheckAvengingWrath(p) end, displayName = "复仇之怒" },
+    
+    -- 祈求组合逻辑
+    { actionName = "divine_plea",      spellID = 54428, priority = 1.05, checkFunc = function(self, p) return self:CheckDivinePlea(p) end, displayName = "神圣恳求" },
+    { actionName = "hand_of_salvation", spellID = 1038,  priority = 1.06, checkFunc = function(self, p) return self:CheckHandOfSalvation(p) end, displayName = "拯救之手" },
     { actionName = "lights_plea", spellID = 1298728, priority = 1.1, checkFunc = function(self, p) return self:CheckLightsPlea(p) end, displayName = "祈求圣光" },
 
     { actionName = "hammer_of_wrath", spellID = 48806, priority = 2, checkFunc = function(self, p) return self:CheckHammerOfWrath(p) end, displayName = "愤怒之锤" },
@@ -308,6 +312,11 @@ function Module:CheckBurstConditions()
     return true
 end
 
+function Module:IsInBurstPhase()
+    -- 爆发期定义：拥有复仇之怒 或 拥有圣光裁决
+    return self:HasBuff("player", 31884) or self:HasBuff("player", 1298723)
+end
+
 function Module:CheckAvengingWrath(p)
     if not self:IsSpellReady(31884, p) then return false end
     
@@ -324,18 +333,64 @@ function Module:CheckAvengingWrath(p)
     return false
 end
 
-function Module:CheckLightsPlea(p)
+function Module:CheckLightsPlea(p, dryRun)
     if not self:IsSpellReady(1298728, p) then return false end
     if not self:CheckBurstConditions() then return false end
     
     -- 祈求圣光特有要求：不移动，正义5层且>5s，无圣光重担
-    if GetUnitSpeed("player") > 0 then self:SetHUDReason("lights_plea", false, "移动中"); return false end
-    if self:GetBuffStacks("player", 1299090) < 5 then self:SetHUDReason("lights_plea", false, "正义未满5层"); return false end
-    if self:GetBuffTimeLeft("player", 1299090) <= 5 then self:SetHUDReason("lights_plea", false, "正义时间不足"); return false end
-    if self:HasDebuff("player", 1299086) then self:SetHUDReason("lights_plea", false, "已有圣光重担"); return false end
+    if GetUnitSpeed("player") > 0 then if not dryRun then self:SetHUDReason("lights_plea", false, "移动中") end; return false end
+    if self:GetBuffStacks("player", 1299090) < 5 then if not dryRun then self:SetHUDReason("lights_plea", false, "正义未满5层") end; return false end
+    if self:GetBuffTimeLeft("player", 1299090) <= 5 then if not dryRun then self:SetHUDReason("lights_plea", false, "正义时间不足") end; return false end
+    if self:HasDebuff("player", 1299086) then if not dryRun then self:SetHUDReason("lights_plea", false, "已有圣光重担") end; return false end
     
-    self:SetHUDReason("lights_plea", true, "触发祈求")
+    if not dryRun then self:SetHUDReason("lights_plea", true, "触发祈求") end
     return true, "player"
+end
+
+function Module:CheckDivinePlea(p)
+    local ready, reason = self:IsSpellReady(54428, p)
+    if not ready then self:SetHUDReason("divine_plea", false, reason); return false end
+    
+    local manaPct = (UnitPower("player") / UnitPowerMax("player") * 100)
+    local stacks = self:GetBuffStacks("player", 1299090)
+    local activeBurst = self:IsInBurstPhase()
+    
+    -- 1. 紧急回蓝：蓝量 < 30% (无视条件)
+    if manaPct < 30 then
+        self:SetHUDReason("divine_plea", true, string.format("紧急回蓝(%.0f%%)", manaPct))
+        return true, "player"
+    end
+    
+    -- 2. 常规回蓝：蓝量 < 80% 且 满足5层正义 且 不在爆发期
+    -- 不在爆发期定义：既没有复仇之怒，也没有圣光裁决
+    if manaPct < 80 and stacks >= 5 and not activeBurst then
+        self:SetHUDReason("divine_plea", true, string.format("常规回蓝(%.0f%%)", manaPct))
+        return true, "player"
+    end
+
+    -- 3. 原有逻辑：祈求圣光联动
+    local pleaName = GetSpellInfo(1298728)
+    local isCasting = pleaName and select(1, UnitCastingInfo("player")) == pleaName
+    if isCasting or self:CheckLightsPlea(p, true) then
+        self:SetHUDReason("divine_plea", true, "祈求圣光联动")
+        return true, "player"
+    end
+    
+    self:SetHUDReason("divine_plea", false, string.format("蓝量%.0f%%/正义%d/爆发Buff%s", manaPct, stacks, tostring(activeBurst)))
+    return false
+end
+
+function Module:CheckHandOfSalvation(p)
+    local ready, reason = self:IsSpellReady(1038, p)
+    if not ready then self:SetHUDReason("hand_of_salvation", false, reason); return false end
+    
+    local pleaName = GetSpellInfo(1298728)
+    local isCasting = pleaName and select(1, UnitCastingInfo("player")) == pleaName
+    if isCasting or self:CheckLightsPlea(p, true) then
+        self:SetHUDReason("hand_of_salvation", true, "祈求期间推荐")
+        return true, "player"
+    end
+    return false
 end
 
 function Module:CheckHammerOfWrath(p)

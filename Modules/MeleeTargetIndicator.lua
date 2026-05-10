@@ -57,7 +57,7 @@ function Module:IsInMeleeCombat()
 end
 
 function Module:CountEnemiesInMeleeRange()
-    local RC = LibStub("LibRangeCheck-2.0")
+    local RC = LibStub("LibRangeCheck-3.0", true) or LibStub("LibRangeCheck-2.0", true)
     if not RC then return 0 end
     
     local range = 5

@@ -15,15 +15,16 @@ local Module = HekiliHelper.HealingShamanSkills
 -- 模块初始化
 function Module:Initialize()
     if not Hekili or not Hekili.Update then return false end
-    
+
     -- Hook Hekili.Update
     local success = HekiliHelper.HookUtils.Wrap(Hekili, "Update", function(oldFunc, self, ...)
         local result = oldFunc(self, ...)
-        -- 移除 Timer，解决潜在闪烁
-        Module:InsertHealingSkills()
+        C_Timer.After(0.001, function()
+            Module:InsertHealingSkills()
+        end)
         return result
     end)
-    
+
     return success
 end
 
@@ -71,7 +72,7 @@ end
 function Module:CheckWaterShield()
     -- 如果技能正在冷却中或被沉默，则不推荐
     if not self:IsSpellReady(57960) then return false end
-    
+
     local isUsable, noMana = IsUsableSpell(57960)
     if not isUsable and not noMana then
         return false
@@ -97,7 +98,7 @@ end
 function Module:CheckEarthShield()
     -- 仅检测焦点目标：是否存在、是否为友方、是否存活
     if UnitExists("focus") and UnitIsFriend("player", "focus") and not UnitIsDead("focus") then
-        
+
         -- 检查技能是否可用（沉默、蓝量等）
         local isUsable, noMana = IsUsableSpell(49284)
         if not isUsable and not noMana then return false end
@@ -110,11 +111,11 @@ function Module:CheckEarthShield()
         for i = 1, 40 do
             local name, _, _, _, _, _, _, _, _, spellId = UnitBuff("focus", i)
             if not name then break end -- 没有更多buff了，跳出循环
-            
+
             -- 同时匹配法术ID和中英文名称，兼容所有等级的大地之盾
-            if spellId == 49284 or name:find("大地之盾") or name:find("Earth Shield") then 
+            if spellId == 49284 or name:find("大地之盾") or name:find("Earth Shield") then  
                 hasEarthShield = true
-                break 
+                break
             end
         end
 
@@ -151,13 +152,13 @@ end
 function Module:CheckTideForce()
     if HekiliHelper.DB.profile.healingShaman and HekiliHelper.DB.profile.healingShaman.enableTideForce == false then return false end
     if not self:IsSpellReady(55198) then return false end
-    
+
     local threshold = (HekiliHelper.DB.profile.healingShaman and HekiliHelper.DB.profile.healingShaman.tideForceThreshold) or 50
     local lowHealthCount = self:GetLowHealthGroupMembersCount(threshold)
-    
+
     local isRaid = IsInRaid()
-    local groupSize = isRaid and GetNumGroupMembers() or GetNumSubgroupMembers() + 1
-    
+    local groupSize = isRaid and GetNumGroupMembers() or GetNumSubgroupMembers() + 1        
+
     if isRaid then
         -- 团队状态：1/3以上成员生命值低于阈值
         if lowHealthCount >= (groupSize / 3) then return true, "player" end
@@ -165,10 +166,10 @@ function Module:CheckTideForce()
         -- 小队状态：一半以上成员生命值低于阈值
         if lowHealthCount >= (groupSize / 2) then return true, "player" end
     end
-    
+
     -- 自身生命值低于阈值也触发
-    if self:GetUnitHealthPercent("player") < threshold then return true, "player" end
-    
+    if self:GetUnitHealthPercent("player") < threshold then return true, "player" end       
+
     return false
 end
 
@@ -247,7 +248,7 @@ end
 
 function Module:InsertHealingSkills()
     if not Hekili or not Hekili.DisplayPool then return end
-    
+
     -- 检查整体开关
     if not HekiliHelper.DB or not HekiliHelper.DB.profile or not HekiliHelper.DB.profile.healingShaman or not HekiliHelper.DB.profile.healingShaman.enabled then
         return
@@ -258,26 +259,21 @@ function Module:InsertHealingSkills()
         if (lowerName == "primary" or lowerName == "aoe") and UI.Active and UI.alpha > 0 then
             local Queue = UI.Recommendations
             if not Queue then return end
-
-            -- 清除旧标志，防止残留
-            for i = 1, 10 do
-                if Queue[i] then 
-                    Queue[i].isHealingShamanSkill = nil 
-                end
-            end
-
             for _, skillDef in ipairs(self.SkillDefinitions) do
                 if self:IsLearned(skillDef.displayName, skillDef.spellID) then
                     local should, target = skillDef.checkFunc(self)
                     if should then
-                        local ability = self:GetSkillFromHekili(skillDef.actionName)
+                        local ability = self:GetSkillFromHekili(skillDef.actionName)        
                         if not ability then
                             local n, _, t = GetSpellInfo(skillDef.spellID)
                             Hekili.Class.abilities[skillDef.actionName] = { key = skillDef.actionName, name = n, texture = t, id = skillDef.spellID, cast = 0, gcd = "off" }
                             ability = Hekili.Class.abilities[skillDef.actionName]
                         end
-                        
                         Queue[1] = Queue[1] or {}
+                        if not Queue[1].isHealingShamanSkill then
+                            Queue[1].originalRecommendation = {}
+                            for k, v in pairs(Queue[1]) do Queue[1].originalRecommendation[k] = v end
+                        end
                         local slot = Queue[1]
                         slot.actionName = skillDef.actionName
                         slot.actionID = skillDef.spellID
