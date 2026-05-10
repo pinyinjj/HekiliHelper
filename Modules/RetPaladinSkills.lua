@@ -165,6 +165,26 @@ function Module:IsBoss(unit)
     return level == -1 or level == 83 or classification == "worldboss" or classification == "boss"
 end
 
+function Module:CountEnemiesInRange(range)
+    local count = 0
+    -- 1. 检查当前目标
+    if UnitExists("target") and not UnitIsFriend("player", "target") and not UnitIsDead("target") then
+        local minR, maxR = self:GetUnitRange("target")
+        if maxR and maxR <= range then count = count + 1 end
+    end
+    
+    -- 2. 扫描姓名板 (最常用)
+    for i = 1, 40 do
+        local unit = "nameplate"..i
+        if UnitExists(unit) and not UnitIsFriend("player", unit) and not UnitIsDead(unit) and not UnitIsUnit(unit, "target") then
+            local minR, maxR = self:GetUnitRange(unit)
+            if maxR and maxR <= range then count = count + 1 end
+        end
+    end
+    
+    return count
+end
+
 -- ============================================
 -- 基础判定工具
 -- ============================================
@@ -277,33 +297,44 @@ end
 -- ============================================
 
 Module.SkillDefinitions = {
-    -- 爆发
-    { actionName = "avenging_wrath", spellID = 31884, priority = 1, checkFunc = function(self, p) return self:CheckAvengingWrath(p) end, displayName = "复仇之怒" },
-    
-    -- 祈求组合逻辑
-    { actionName = "divine_plea",      spellID = 54428, priority = 1.05, checkFunc = function(self, p) return self:CheckDivinePlea(p) end, displayName = "神圣恳求" },
-    { actionName = "hand_of_salvation", spellID = 1038,  priority = 1.06, checkFunc = function(self, p) return self:CheckHandOfSalvation(p) end, displayName = "拯救之手" },
-    { actionName = "lights_plea", spellID = 1298728, priority = 1.1, checkFunc = function(self, p) return self:CheckLightsPlea(p) end, displayName = "祈求圣光" },
+    -- 爆发 (固定极高优先级)
+    { actionName = "avenging_wrath", spellID = 31884, basePriority = 1, checkFunc = function(self, p) return self:CheckAvengingWrath(p) end, displayName = "复仇之怒" },
+    { actionName = "lights_plea", spellID = 1298728, basePriority = 1.1, checkFunc = function(self, p) return self:CheckLightsPlea(p) end, displayName = "祈求圣光" },
+    { actionName = "divine_plea",      spellID = 54428, basePriority = 1.2, checkFunc = function(self, p) return self:CheckDivinePlea(p) end, displayName = "神圣恳求" },
+    { actionName = "hand_of_salvation", spellID = 1038,  basePriority = 1.3, checkFunc = function(self, p) return self:CheckHandOfSalvation(p) end, displayName = "拯救之手" },
 
-    { actionName = "hammer_of_wrath", spellID = 48806, priority = 2, checkFunc = function(self, p) return self:CheckHammerOfWrath(p) end, displayName = "愤怒之锤" },
-    
-    -- 十字军优先模式 (正义 < 5层时)
-    { actionName = "crusader_strike_high", spellID = 35395, priority = 3, checkFunc = function(self, p) return self:CheckCrusaderStrike(true, p) end, displayName = "十字军打击(叠层优先)" },
-    { actionName = "divine_storm_low",    spellID = 53385, priority = 3.1, checkFunc = function(self, p) return self:CheckDivineStorm(false, p) end, displayName = "神圣风暴(填充)" },
-
-    -- 神圣风暴优先模式 (正义 >= 5层时)
-    { actionName = "divine_storm_high",   spellID = 53385, priority = 3.5, checkFunc = function(self, p) return self:CheckDivineStorm(true, p) end, displayName = "神圣风暴(爆发优先)" },
-    { actionName = "crusader_strike_low",  spellID = 35395, priority = 3.6, checkFunc = function(self, p) return self:CheckCrusaderStrike(false, p) end, displayName = "十字军打击(填充)" },
-
-    { actionName = "exorcism_high",    spellID = 48801, priority = 4.5, checkFunc = function(self, p) return self:CheckExorcism(true, p) end, displayName = "驱邪术(特殊)" },
-    { actionName = "judgement_of_light", spellID = 20271, priority = 5, checkFunc = function(self, p) return self:CheckJudgement(20271, p) end, displayName = "圣光审判" },
-    { actionName = "judgement_of_wisdom", spellID = 53408, priority = 5.1, checkFunc = function(self, p) return self:CheckJudgement(53408, p) end, displayName = "智慧审判" },
-    { actionName = "exorcism",        spellID = 48801, priority = 6, checkFunc = function(self, p) return self:CheckExorcism(false, p) end, displayName = "驱邪术" },
-    { actionName = "consecration",    spellID = 48819, priority = 7, checkFunc = function(self, p) return self:CheckConsecration(p) end, displayName = "奉献" },
+    -- 核心技能 (优先级动态计算)
+    { actionName = "hammer_of_wrath", spellID = 48806, basePriority = 10, checkFunc = function(self, p) return self:CheckHammerOfWrath(p) end, displayName = "愤怒之锤" },
+    { actionName = "crusader_strike", spellID = 35395, basePriority = 20, checkFunc = function(self, p) return self:CheckCrusaderStrike(p) end, displayName = "十字军打击" },
+    { actionName = "judgement",       spellID = 20271, basePriority = 30, checkFunc = function(self, p) return self:CheckJudgement(p) end, displayName = "审判" },
+    { actionName = "divine_storm",    spellID = 53385, basePriority = 40, checkFunc = function(self, p) return self:CheckDivineStorm(p) end, displayName = "神圣风暴" },
+    { actionName = "consecration",    spellID = 48819, basePriority = 50, checkFunc = function(self, p) return self:CheckConsecration(p) end, displayName = "奉献" },
+    { actionName = "exorcism",        spellID = 48801, basePriority = 60, checkFunc = function(self, p) return self:CheckExorcism(p) end, displayName = "驱邪术" },
     
     -- 额外补充
-    { actionName = "lionheart",      spellID = 20599, priority = 8, checkFunc = function(self, p) return self:CheckLionheart(p) end, displayName = "狮心" },
+    { actionName = "lionheart",      spellID = 20599, basePriority = 80, checkFunc = function(self, p) return self:CheckLionheart(p) end, displayName = "狮心" },
+    
+    -- 兜底 (固定极低优先级)
+    { actionName = "divine_storm_fallback",   spellID = 53385, basePriority = 90, checkFunc = function(self, p) return self:CheckDivineStormFallback(p) end, displayName = "神圣风暴(兜底)" },
+    { actionName = "crusader_strike_fallback", spellID = 35395, basePriority = 99, checkFunc = function(self, p) return self:CheckCrusaderStrikeFallback(p) end, displayName = "十字军打击(兜底)" },
 }
+
+function Module:GetDynamicPriority(actionName, isAOE, isExecute)
+    -- 正常阶段单体: 十字军(2) > 审判(3) > 神圣风暴(4) > 奉献(5) > 驱邪术(6)
+    -- 正常阶段AOE:  奉献(2) > 神圣风暴(3) > 十字军(4) > 审判(5) > 驱邪术(6)
+    -- 斩杀阶段单体: 愤怒之锤(2) > 审判(3) > 十字军(4) > 神圣风暴(5) > 驱邪术(6) > 奉献(7)
+
+    if isExecute then
+        local map = { hammer_of_wrath = 2, judgement = 3, crusader_strike = 4, divine_storm = 5, exorcism = 6, consecration = 7 }
+        return map[actionName] or 100
+    elseif isAOE then
+        local map = { consecration = 2, divine_storm = 3, crusader_strike = 4, judgement = 5, exorcism = 6 }
+        return map[actionName] or 100
+    else
+        local map = { crusader_strike = 2, judgement = 3, divine_storm = 4, consecration = 5, exorcism = 6 }
+        return map[actionName] or 100
+    end
+end
 
 function Module:CheckBurstConditions()
     if not self:IsBoss("target") or UnitIsDead("target") then return false end
@@ -350,17 +381,17 @@ end
 function Module:CheckDivinePlea(p)
     local ready, reason = self:IsSpellReady(54428, p)
     if not ready then self:SetHUDReason("divine_plea", false, reason); return false end
-    
+
     local manaPct = (UnitPower("player") / UnitPowerMax("player") * 100)
     local stacks = self:GetBuffStacks("player", 1299090)
     local activeBurst = self:IsInBurstPhase()
-    
+
     -- 1. 紧急回蓝：蓝量 < 30% (无视条件)
     if manaPct < 30 then
         self:SetHUDReason("divine_plea", true, string.format("紧急回蓝(%.0f%%)", manaPct))
         return true, "player"
     end
-    
+
     -- 2. 常规回蓝：蓝量 < 80% 且 满足5层正义 且 不在爆发期
     -- 不在爆发期定义：既没有复仇之怒，也没有圣光裁决
     if manaPct < 80 and stacks >= 5 and not activeBurst then
@@ -368,14 +399,13 @@ function Module:CheckDivinePlea(p)
         return true, "player"
     end
 
-    -- 3. 原有逻辑：祈求圣光联动
-    local pleaName = GetSpellInfo(1298728)
-    local isCasting = pleaName and select(1, UnitCastingInfo("player")) == pleaName
-    if isCasting or self:CheckLightsPlea(p, true) then
-        self:SetHUDReason("divine_plea", true, "祈求圣光联动")
+    -- 3. 原有逻辑：仅在祈求圣光施法期间联动
+    local _, _, _, _, _, _, _, _, castSpellID = UnitCastingInfo("player")
+    if castSpellID == 1298728 then
+        self:SetHUDReason("divine_plea", true, "祈求圣光联动(施法中)")
         return true, "player"
     end
-    
+
     self:SetHUDReason("divine_plea", false, string.format("蓝量%.0f%%/正义%d/爆发Buff%s", manaPct, stacks, tostring(activeBurst)))
     return false
 end
@@ -383,11 +413,10 @@ end
 function Module:CheckHandOfSalvation(p)
     local ready, reason = self:IsSpellReady(1038, p)
     if not ready then self:SetHUDReason("hand_of_salvation", false, reason); return false end
-    
-    local pleaName = GetSpellInfo(1298728)
-    local isCasting = pleaName and select(1, UnitCastingInfo("player")) == pleaName
-    if isCasting or self:CheckLightsPlea(p, true) then
-        self:SetHUDReason("hand_of_salvation", true, "祈求期间推荐")
+
+    local _, _, _, _, _, _, _, _, castSpellID = UnitCastingInfo("player")
+    if castSpellID == 1298728 then
+        self:SetHUDReason("hand_of_salvation", true, "祈求期间推荐(施法中)")     
         return true, "player"
     end
     return false
@@ -398,63 +427,44 @@ function Module:CheckHammerOfWrath(p)
     local ready, reason = self:IsSpellReady(48806, p)
     if not ready then self:SetHUDReason("hammer_of_wrath", false, reason); return false end
     if UnitHealth("target") / UnitHealthMax("target") * 100 >= 20 then self:SetHUDReason("hammer_of_wrath", false, "血量>20%"); return false end
-    self:SetHUDReason("hammer_of_wrath", true, "斩杀期"); return true, "target"
+    self:SetHUDReason("hammer_of_wrath", true, "就绪"); return true, "target"
 end
 
-function Module:CheckCrusaderStrike(highMode, p)
-    local action = highMode and "crusader_strike_high" or "crusader_strike_low"
-    if not UnitExists("target") or UnitIsDead("target") then self:SetHUDReason(action, false, "无目标"); return false end
-    
-    local stacks = self:GetBuffStacks("player", 1299090)
-    local should = highMode and (stacks < 5) or (stacks >= 5)
-    if not should then return false end
-
+function Module:CheckCrusaderStrike(p)
+    if not UnitExists("target") or UnitIsDead("target") then self:SetHUDReason("crusader_strike", false, "无目标"); return false end
     local minR, maxR = self:GetUnitRange("target")
-    if not maxR or maxR > 5 then self:SetHUDReason(action, false, "超出5码"); return false end
+    if not maxR or maxR > 5 then self:SetHUDReason("crusader_strike", false, "超出5码"); return false end
     local ready, reason = self:IsSpellReady(35395, p)
-    if not ready then self:SetHUDReason(action, false, reason); return false end
-    
-    self:SetHUDReason(action, true, "就绪")
-    return true, "target"
+    if not ready then self:SetHUDReason("crusader_strike", false, reason); return false end
+    self:SetHUDReason("crusader_strike", true, "就绪"); return true, "target"
 end
 
-function Module:CheckDivineStorm(highMode, p)
-    local action = highMode and "divine_storm_high" or "divine_storm_low"
-    if not UnitExists("target") or UnitIsDead("target") then self:SetHUDReason(action, false, "无目标"); return false end
-
-    local stacks = self:GetBuffStacks("player", 1299090)
-    local should = highMode and (stacks >= 5) or (stacks < 5)
-    if not should then return false end
-
+function Module:CheckDivineStorm(p)
+    if not UnitExists("target") or UnitIsDead("target") then self:SetHUDReason("divine_storm", false, "无目标"); return false end
     local minR, maxR = self:GetUnitRange("target")
-    if not maxR or maxR > 5 then self:SetHUDReason(action, false, "超出5码"); return false end
+    if not maxR or maxR > 5 then self:SetHUDReason("divine_storm", false, "超出5码"); return false end
     local ready, reason = self:IsSpellReady(53385, p)
-    if not ready then self:SetHUDReason(action, false, reason); return false end
-    
-    self:SetHUDReason(action, true, "就绪")
-    return true, "player"
+    if not ready then self:SetHUDReason("divine_storm", false, reason); return false end
+    self:SetHUDReason("divine_storm", true, "就绪"); return true, "player"
 end
 
-function Module:CheckExorcism(high, p)
-    local action = high and "exorcism_high" or "exorcism"
-    if not self:HasBuff("player", 59578) then self:SetHUDReason(action, false, "无战争艺术"); return false end
+function Module:CheckExorcism(p)
+    if not self:HasBuff("player", 59578) then self:SetHUDReason("exorcism", false, "无战争艺术"); return false end
     local ready, reason = self:IsSpellReady(48801, p)
-    if not ready then self:SetHUDReason(action, false, reason); return false end
-    local type = UnitCreatureType("target")
-    local isSpecial = (type == "Undead" or type == "Demon" or type == "亡灵" or type == "恶魔")
-    local should = high and isSpecial or (not high and not isSpecial)
-    self:SetHUDReason(action, should, isSpecial and "亡灵/恶魔" or "普通目标")
-    return should, "target"
+    if not ready then self:SetHUDReason("exorcism", false, reason); return false end
+    self:SetHUDReason("exorcism", true, "就绪"); return true, "target"
 end
 
-function Module:CheckJudgement(id, p)
-    local action = id == 20271 and "judgement_of_light" or "judgement_of_wisdom"
-    local ready, reason = self:IsSpellReady(id, p)
-    if not ready then self:SetHUDReason(action, false, reason); return false end
-    local manaPct = (UnitPower("player") / UnitPowerMax("player") * 100)
-    local should = (id == 20271 and manaPct >= 80) or (id == 53408 and manaPct < 80)
-    self:SetHUDReason(action, should, string.format("蓝量%.0f%%", manaPct))
-    return should, "target"
+function Module:CheckJudgement(p)
+    -- 审判逻辑：如果有智慧审判技能且蓝量低，使用智慧审判，否则圣光审判
+    local spellID = 20271 -- 默认圣光
+    if IsSpellKnown(53408) and (UnitPower("player") / UnitPowerMax("player") * 100) < 80 then
+        spellID = 53408
+    end
+    
+    local ready, reason = self:IsSpellReady(spellID, p)
+    if not ready then self:SetHUDReason("judgement", false, reason); return false end
+    self:SetHUDReason("judgement", true, "就绪"); return true, "target"
 end
 
 function Module:CheckConsecration(p)
@@ -462,7 +472,7 @@ function Module:CheckConsecration(p)
     if not ready then self:SetHUDReason("consecration", false, reason); return false end
     local minR, maxR = self:GetUnitRange("target")
     if not maxR or maxR > 5 then self:SetHUDReason("consecration", false, "超出5码"); return false end
-    self:SetHUDReason("consecration", true, "地毯填充"); return true, "player"
+    self:SetHUDReason("consecration", true, "就绪"); return true, "player"
 end
 
 function Module:CheckLionheart(p)
@@ -478,6 +488,22 @@ function Module:CheckLionheart(p)
     return false
 end
 
+function Module:CheckDivineStormFallback(p)
+    if not UnitExists("target") or UnitIsDead("target") then return false end
+    local minR, maxR = self:GetUnitRange("target")
+    if not maxR or maxR > 5 then return false end
+    self:SetHUDReason("divine_storm_fallback", true, "兜底(无视CD)")
+    return true, "player"
+end
+
+function Module:CheckCrusaderStrikeFallback(p)
+    if not UnitExists("target") or UnitIsDead("target") then return false end
+    local minR, maxR = self:GetUnitRange("target")
+    if not maxR or maxR > 5 then return false end
+    self:SetHUDReason("crusader_strike_fallback", true, "兜底(无视CD)")
+    return true, "target"
+end
+
 -- ============================================
 -- 插入队列
 -- ============================================
@@ -486,6 +512,34 @@ function Module:InsertPaladinSkills()
     if not Hekili or not Hekili.DisplayPool then return end
     
     self:UpdateTTD()
+    local isExecute = UnitExists("target") and not UnitIsDead("target") and (UnitHealth("target") / UnitHealthMax("target") * 100) < 20
+    local isAOE = self:CountEnemiesInRange(5) > 2
+    
+    -- 准备排序列表
+    local activeSkills = {}
+    for _, def in ipairs(self.SkillDefinitions) do
+        local isLearned = self:IsLearned(def.displayName, def.spellID)
+        if def.actionName == "lionheart" then isLearned = GetItemCount(20599) > 0 end
+        
+        if isLearned then
+            local currentPriority = def.basePriority
+            -- 动态优先级调整
+            if currentPriority >= 10 and currentPriority < 80 then
+                currentPriority = self:GetDynamicPriority(def.actionName, isAOE, isExecute)
+            end
+            
+            table.insert(activeSkills, {
+                actionName = def.actionName,
+                spellID = def.spellID,
+                priority = currentPriority,
+                checkFunc = def.checkFunc,
+                displayName = def.displayName
+            })
+        end
+    end
+    
+    -- 按优先级排序 (数值越小越靠前)
+    table.sort(activeSkills, function(a, b) return a.priority < b.priority end)
 
     if self.HUDFrame then if HekiliHelper.DebugEnabled then self.HUDFrame:Show() else self.HUDFrame:Hide() end end
     if not HekiliHelper.DB or not HekiliHelper.DB.profile or not HekiliHelper.DB.profile.retPaladin or not HekiliHelper.DB.profile.retPaladin.enabled then return end
@@ -498,24 +552,22 @@ function Module:InsertPaladinSkills()
             for i = 1, 10 do if Queue[i] and Queue[i].isRetPaladinSkill then Queue[i] = nil end end
 
             local skillsFound = 0
-            for _, skillDef in ipairs(self.SkillDefinitions) do
-                local isLearned = self:IsLearned(skillDef.displayName, skillDef.spellID)
-                if skillDef.actionName == "lionheart" then
-                    isLearned = GetItemCount(20599) > 0
-                end
-
-                if isLearned then
+            local hasNormalSkill = false
+            for _, skillDef in ipairs(activeSkills) do
+                -- 兜底逻辑：如果已有正常技能，则跳过兜底
+                if skillDef.priority >= 90 and hasNormalSkill then
+                    -- Skip
+                else
                     local should, target = skillDef.checkFunc(self, skillDef.priority)
                     if should and skillsFound < 4 then
                         skillsFound = skillsFound + 1
+                        if skillDef.priority < 90 then hasNormalSkill = true end
+                        
                         local ability = Hekili.Class.abilities[skillDef.actionName]
                         if not ability then
                             local n, _, t
-                            if skillDef.actionName == "lionheart" then
-                                n, _, _, _, _, _, _, _, _, t = GetItemInfo(20599)
-                            else
-                                n, _, t = GetSpellInfo(skillDef.spellID)
-                            end
+                            if skillDef.actionName == "lionheart" then n, _, _, _, _, _, _, _, _, t = GetItemInfo(20599)
+                            else n, _, t = GetSpellInfo(skillDef.spellID) end
                             if n then Hekili.Class.abilities[skillDef.actionName] = { key = skillDef.actionName, name = n, texture = t, id = skillDef.spellID, cast = 0, gcd = "off" }; ability = Hekili.Class.abilities[skillDef.actionName] end
                         end
                         if ability then
