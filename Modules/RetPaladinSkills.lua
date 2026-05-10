@@ -83,7 +83,22 @@ function Module:UpdateHUDText()
     if minR and maxR then rangeStr = string.format("%d-%d码", minR, maxR)
     elseif maxR then rangeStr = string.format("0-%d码", maxR) end
 
+    -- 判定当前模式显示
+    local isExecute = UnitExists("target") and not UnitIsDead("target") and (UnitHealth("target") / UnitHealthMax("target") * 100) < 20
+    local isAOE = self:CountEnemiesInRange(5) > 2
+    local modeStr = "|cFF00FF00单体|r"
+    if isExecute then modeStr = "|cFFFF0000斩杀|r"
+    elseif isAOE then modeStr = "|cFFFFFF00AOE|r" end
+
+    -- 2. 核心技能同步监控
+    local pleaReady, pleaReason, pleaCastID, isCasting = self:IsSpellReady(54428, nil, true)
+    local curName, _, _, _, _, _, _, _, curID = UnitCastingInfo("player")
+    if not curName then curName, _, _, _, _, _, _, curID = UnitChannelInfo("player") end
+
     table.insert(lines, string.format("|cFFFFFF00[全局状态]|r"))
+    table.insert(lines, string.format("当前模式: %s", modeStr))
+    table.insert(lines, string.format("当前施法: %s(%s)", curName or "无", tostring(curID or "无")))
+    table.insert(lines, string.format("恳求状态: %s", pleaReason))
     table.insert(lines, string.format("正义Buff(1299090): %d层", righteousnessStacks))
     table.insert(lines, string.format("目标精确距离: %s", rangeStr))
     table.insert(lines, string.format("预计死亡时间(TTD): %.1fs", self:GetTTD()))
@@ -157,9 +172,14 @@ function Module:GetTTD()
     return self.ttdData.ttd
 end
 
+function Module:IsValidEnemy(unit)
+    unit = unit or "target"
+    return UnitExists(unit) and not UnitIsFriend("player", unit) and not UnitIsDead(unit)
+end
+
 function Module:IsBoss(unit)
     unit = unit or "target"
-    if not UnitExists(unit) then return false end
+    if not self:IsValidEnemy(unit) then return false end
     local level = UnitLevel(unit)
     local classification = UnitClassification(unit)
     return level == -1 or level == 83 or classification == "worldboss" or classification == "boss"
@@ -168,7 +188,7 @@ end
 function Module:CountEnemiesInRange(range)
     local count = 0
     -- 1. 检查当前目标
-    if UnitExists("target") and not UnitIsFriend("player", "target") and not UnitIsDead("target") then
+    if self:IsValidEnemy("target") then
         local minR, maxR = self:GetUnitRange("target")
         if maxR and maxR <= range then count = count + 1 end
     end
@@ -176,7 +196,7 @@ function Module:CountEnemiesInRange(range)
     -- 2. 扫描姓名板 (最常用)
     for i = 1, 40 do
         local unit = "nameplate"..i
-        if UnitExists(unit) and not UnitIsFriend("player", unit) and not UnitIsDead(unit) and not UnitIsUnit(unit, "target") then
+        if self:IsValidEnemy(unit) and not UnitIsUnit(unit, "target") then
             local minR, maxR = self:GetUnitRange(unit)
             if maxR and maxR <= range then count = count + 1 end
         end
@@ -189,25 +209,68 @@ end
 -- 基础判定工具
 -- ============================================
 
-function Module:IsSpellReady(id, currentPriority)
+function Module:IsSpellReady(id, currentPriority, ignoreCastingCD)
     local s, d = GetSpellCooldown(id)
-    -- GCD 判定参考 (使用 61304 作为标准 GCD 锚点)
     local gS, gD = GetSpellCooldown(61304)
+    local activeCastID = nil
+    local isCurrentlyCastingOrChanneling = false
 
-    -- 1. 如果完全没有 CD
-    if not s or s == 0 then return true, "已就绪" end
-
-    -- 2. 排除 GCD 影响：
-    -- 如果当前技能的持续时间 d 与 GCD 持续时间 gD 相同，且起始时间一致，说明这只是 GCD
-    if gS and gS > 0 and s == gS and d == gD then
-        return true, "GCD中"
+    -- 1. 施法检测
+    local name, _, _, startTime, endTime = UnitCastingInfo("player")
+    local isChannel = false
+    if not name then
+        name, _, _, startTime, endTime = UnitChannelInfo("player")
+        isChannel = true
     end
 
-    -- 3. 计算真实 CD
-    local cd = s + d - GetTime()
-    if cd <= 0 then return true, "已就绪" end
+    if name then
+        isCurrentlyCastingOrChanneling = true
+        -- 针对不同 WoW 版本和 Titan 环境的多重判定 (8-11位均尝试)
+        local ids = {}
+        if isChannel then
+            for i = 7, 10 do table.insert(ids, (select(i, UnitChannelInfo("player")))) end
+        else
+            for i = 7, 11 do table.insert(ids, (select(i, UnitCastingInfo("player")))) end
+        end
+        
+        -- 判定优先级：匹配传入ID > 匹配7位数字ID > 名称匹配
+        local foundID = nil
+        for _, v in ipairs(ids) do
+            if v == id then foundID = v; break end
+            if type(v) == "number" and v > 1000000 then foundID = v end
+        end
+        
+        if not foundID and name == GetSpellInfo(id) then
+            foundID = id
+        end
+        activeCastID = foundID or ids[1] -- 兜底取第一个
+    end
 
-    return false, string.format("CD(%.1fs)", cd)
+    -- 2. 如果完全没有 CD
+    if not s or s == 0 then return true, "已就绪", activeCastID, isCurrentlyCastingOrChanneling end
+
+    -- 3. 排除正在读条产生的伪 CD
+    if ignoreCastingCD and name then
+        local remainingCast = (endTime / 1000) - GetTime()
+        local cd = s + d - GetTime()
+        
+        -- 增加容差到 0.5s
+        local isSync = math.abs(cd - remainingCast) < 0.5
+        if isSync then
+            return true, "读条中同步", activeCastID, isCurrentlyCastingOrChanneling
+        end
+    end
+
+    -- 4. 排除 GCD 影响
+    if gS and gS > 0 and s == gS and d == gD then
+        return true, "GCD中", activeCastID, isCurrentlyCastingOrChanneling
+    end
+
+    -- 5. 计算真实 CD
+    local cd = s + d - GetTime()
+    if cd <= 0 then return true, "已就绪", activeCastID, isCurrentlyCastingOrChanneling end
+
+    return false, string.format("CD(%.1fs)", cd), activeCastID, isCurrentlyCastingOrChanneling
 end
 
 function Module:IsLearned(name, id)
@@ -301,7 +364,6 @@ Module.SkillDefinitions = {
     { actionName = "avenging_wrath", spellID = 31884, basePriority = 1, checkFunc = function(self, p) return self:CheckAvengingWrath(p) end, displayName = "复仇之怒" },
     { actionName = "lights_plea", spellID = 1298728, basePriority = 1.1, checkFunc = function(self, p) return self:CheckLightsPlea(p) end, displayName = "祈求圣光" },
     { actionName = "divine_plea",      spellID = 54428, basePriority = 1.2, checkFunc = function(self, p) return self:CheckDivinePlea(p) end, displayName = "神圣恳求" },
-    { actionName = "hand_of_salvation", spellID = 1038,  basePriority = 1.3, checkFunc = function(self, p) return self:CheckHandOfSalvation(p) end, displayName = "拯救之手" },
 
     -- 核心技能 (优先级动态计算)
     { actionName = "hammer_of_wrath", spellID = 48806, basePriority = 10, checkFunc = function(self, p) return self:CheckHammerOfWrath(p) end, displayName = "愤怒之锤" },
@@ -365,7 +427,15 @@ function Module:CheckAvengingWrath(p)
 end
 
 function Module:CheckLightsPlea(p, dryRun)
-    if not self:IsSpellReady(1298728, p) then return false end
+    local ready, reason, castID = self:IsSpellReady(1298728, p, true)
+    
+    -- 如果正在施放祈求圣光 (支持 1298728 和 1298724)，且还没有获得圣光裁决BUFF，则强制保持推荐
+    if (castID == 1298728 or castID == 1298724) and not self:HasBuff("player", 1298723) then
+        if not dryRun then self:SetHUDReason("lights_plea", true, "引导中(等待裁决)") end
+        return true, "player"
+    end
+
+    if not ready then return false end
     if not self:CheckBurstConditions() then return false end
     
     -- 祈求圣光特有要求：不移动，正义5层且>5s，无圣光重担
@@ -379,7 +449,7 @@ function Module:CheckLightsPlea(p, dryRun)
 end
 
 function Module:CheckDivinePlea(p)
-    local ready, reason = self:IsSpellReady(54428, p)
+    local ready, reason = self:IsSpellReady(54428, p, true)
     if not ready then self:SetHUDReason("divine_plea", false, reason); return false end
 
     local manaPct = (UnitPower("player") / UnitPowerMax("player") * 100)
@@ -399,31 +469,12 @@ function Module:CheckDivinePlea(p)
         return true, "player"
     end
 
-    -- 3. 原有逻辑：仅在祈求圣光施法期间联动
-    local _, _, _, _, _, _, _, _, castSpellID = UnitCastingInfo("player")
-    if castSpellID == 1298728 then
-        self:SetHUDReason("divine_plea", true, "祈求圣光联动(施法中)")
-        return true, "player"
-    end
-
     self:SetHUDReason("divine_plea", false, string.format("蓝量%.0f%%/正义%d/爆发Buff%s", manaPct, stacks, tostring(activeBurst)))
     return false
 end
 
-function Module:CheckHandOfSalvation(p)
-    local ready, reason = self:IsSpellReady(1038, p)
-    if not ready then self:SetHUDReason("hand_of_salvation", false, reason); return false end
-
-    local _, _, _, _, _, _, _, _, castSpellID = UnitCastingInfo("player")
-    if castSpellID == 1298728 then
-        self:SetHUDReason("hand_of_salvation", true, "祈求期间推荐(施法中)")     
-        return true, "player"
-    end
-    return false
-end
-
 function Module:CheckHammerOfWrath(p)
-    if not UnitExists("target") or UnitIsDead("target") then self:SetHUDReason("hammer_of_wrath", false, "无目标"); return false end
+    if not self:IsValidEnemy("target") then self:SetHUDReason("hammer_of_wrath", false, "无有效敌人目标"); return false end
     local ready, reason = self:IsSpellReady(48806, p)
     if not ready then self:SetHUDReason("hammer_of_wrath", false, reason); return false end
     if UnitHealth("target") / UnitHealthMax("target") * 100 >= 20 then self:SetHUDReason("hammer_of_wrath", false, "血量>20%"); return false end
@@ -431,7 +482,7 @@ function Module:CheckHammerOfWrath(p)
 end
 
 function Module:CheckCrusaderStrike(p)
-    if not UnitExists("target") or UnitIsDead("target") then self:SetHUDReason("crusader_strike", false, "无目标"); return false end
+    if not self:IsValidEnemy("target") then self:SetHUDReason("crusader_strike", false, "无有效敌人目标"); return false end
     local minR, maxR = self:GetUnitRange("target")
     if not maxR or maxR > 5 then self:SetHUDReason("crusader_strike", false, "超出5码"); return false end
     local ready, reason = self:IsSpellReady(35395, p)
@@ -440,7 +491,7 @@ function Module:CheckCrusaderStrike(p)
 end
 
 function Module:CheckDivineStorm(p)
-    if not UnitExists("target") or UnitIsDead("target") then self:SetHUDReason("divine_storm", false, "无目标"); return false end
+    if not self:IsValidEnemy("target") then self:SetHUDReason("divine_storm", false, "无有效敌人目标"); return false end
     local minR, maxR = self:GetUnitRange("target")
     if not maxR or maxR > 5 then self:SetHUDReason("divine_storm", false, "超出5码"); return false end
     local ready, reason = self:IsSpellReady(53385, p)
@@ -449,6 +500,7 @@ function Module:CheckDivineStorm(p)
 end
 
 function Module:CheckExorcism(p)
+    if not self:IsValidEnemy("target") then self:SetHUDReason("exorcism", false, "无有效敌人目标"); return false end
     if not self:HasBuff("player", 59578) then self:SetHUDReason("exorcism", false, "无战争艺术"); return false end
     local ready, reason = self:IsSpellReady(48801, p)
     if not ready then self:SetHUDReason("exorcism", false, reason); return false end
@@ -456,6 +508,7 @@ function Module:CheckExorcism(p)
 end
 
 function Module:CheckJudgement(p)
+    if not self:IsValidEnemy("target") then self:SetHUDReason("judgement", false, "无有效敌人目标"); return false end
     -- 审判逻辑：如果有智慧审判技能且蓝量低，使用智慧审判，否则圣光审判
     local spellID = 20271 -- 默认圣光
     if IsSpellKnown(53408) and (UnitPower("player") / UnitPowerMax("player") * 100) < 80 then
@@ -468,6 +521,7 @@ function Module:CheckJudgement(p)
 end
 
 function Module:CheckConsecration(p)
+    if not self:IsValidEnemy("target") then self:SetHUDReason("consecration", false, "无有效敌人目标"); return false end
     local ready, reason = self:IsSpellReady(48819, p)
     if not ready then self:SetHUDReason("consecration", false, reason); return false end
     local minR, maxR = self:GetUnitRange("target")
@@ -489,7 +543,7 @@ function Module:CheckLionheart(p)
 end
 
 function Module:CheckDivineStormFallback(p)
-    if not UnitExists("target") or UnitIsDead("target") then return false end
+    if not self:IsValidEnemy("target") then return false end
     local minR, maxR = self:GetUnitRange("target")
     if not maxR or maxR > 5 then return false end
     self:SetHUDReason("divine_storm_fallback", true, "兜底(无视CD)")
@@ -497,7 +551,7 @@ function Module:CheckDivineStormFallback(p)
 end
 
 function Module:CheckCrusaderStrikeFallback(p)
-    if not UnitExists("target") or UnitIsDead("target") then return false end
+    if not self:IsValidEnemy("target") then return false end
     local minR, maxR = self:GetUnitRange("target")
     if not maxR or maxR > 5 then return false end
     self:SetHUDReason("crusader_strike_fallback", true, "兜底(无视CD)")
@@ -512,7 +566,7 @@ function Module:InsertPaladinSkills()
     if not Hekili or not Hekili.DisplayPool then return end
     
     self:UpdateTTD()
-    local isExecute = UnitExists("target") and not UnitIsDead("target") and (UnitHealth("target") / UnitHealthMax("target") * 100) < 20
+    local isExecute = self:IsValidEnemy("target") and (UnitHealth("target") / UnitHealthMax("target") * 100) < 20
     local isAOE = self:CountEnemiesInRange(5) > 2
     
     -- 准备排序列表
