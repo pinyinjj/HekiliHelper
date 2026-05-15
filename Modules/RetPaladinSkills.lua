@@ -86,11 +86,19 @@ function Module:UpdateHUDText()
     -- 判定当前模式显示
     local enemyCount5 = self:CountEnemiesInRange(5)
     local enemyCount8 = self:CountEnemiesInRange(8)
+    local isBossTarget = self:IsBoss("target")
     local isExecute = self:IsValidEnemy("target") and (UnitHealth("target") / UnitHealthMax("target") * 100) < 20
-    local isAOE = enemyCount5 > 2
+    local isAOE = enemyCount8 > 1
     local modeStr = "|cFF00FF00单体|r"
-    if isExecute then modeStr = "|cFFFF0000斩杀|r"
-    elseif isAOE then modeStr = "|cFFFFFF00AOE|r" end
+    if isExecute then 
+        modeStr = "|cFFFF0000斩杀|r"
+    elseif isAOE then
+        if isBossTarget and righteousnessStacks < 5 then
+            modeStr = "|cFFFF8800Boss AOE(叠层)|r"
+        else
+            modeStr = "|cFFFFFF00AOE|r"
+        end
+    end
 
     -- 2. 核心技能同步监控
     local pleaReady, pleaReason, pleaCastID, isCasting = self:IsSpellReady(54428, nil, true)
@@ -188,6 +196,30 @@ function Module:IsBoss(unit)
     local level = UnitLevel(unit)
     local classification = UnitClassification(unit)
     return level == -1 or level == 83 or classification == "worldboss" or classification == "boss"
+end
+
+function Module:IsSpecialType(unit)
+    local t = UnitCreatureType(unit)
+    return t == "Undead" or t == "Demon" or t == "亡灵" or t == "恶魔"
+end
+
+function Module:HasAnySeal()
+    return self:HasBuff("player", 20375) or self:HasBuff("player", 31801)
+end
+
+function Module:HasSpecialEnemyInRange(range)
+    if self:IsValidEnemy("target") and self:IsSpecialType("target") then
+        local _, maxR = self:GetUnitRange("target")
+        if maxR and maxR <= range then return true end
+    end
+    for i = 1, 40 do
+        local u = "nameplate"..i
+        if self:IsValidEnemy(u) and self:IsSpecialType(u) then
+            local _, maxR = self:GetUnitRange(u)
+            if maxR and maxR <= range then return true end
+        end
+    end
+    return false
 end
 
 function Module:CountEnemiesInRange(range)
@@ -360,11 +392,25 @@ function Module:HasDebuff(unit, spellID)
     return false
 end
 
+function Module:CheckSealOfVengeance(p)
+    -- 如果已经有任何圣印，则不推荐
+    if self:HasAnySeal() then return false end
+    
+    local ready, reason = self:IsSpellReady(31801, p)
+    if not ready then return false end
+    
+    self:SetHUDReason("seal_of_vengeance", true, "缺失圣印")
+    return true, "player"
+end
+
 -- ============================================
 -- 技能定义与逻辑
 -- ============================================
 
 Module.SkillDefinitions = {
+    -- 基础维护 (最高优先级)
+    { actionName = "seal_of_vengeance", spellID = 31801, basePriority = 0.5, checkFunc = function(self, p) return self:CheckSealOfVengeance(p) end, displayName = "复仇圣印" },
+
     -- 爆发 (固定极高优先级)
     { actionName = "avenging_wrath", spellID = 31884, basePriority = 1, checkFunc = function(self, p) return self:CheckAvengingWrath(p) end, displayName = "复仇之怒" },
     { actionName = "lights_plea", spellID = 1298728, basePriority = 1.1, checkFunc = function(self, p) return self:CheckLightsPlea(p) end, displayName = "祈求圣光" },
@@ -377,30 +423,130 @@ Module.SkillDefinitions = {
     { actionName = "divine_storm",    spellID = 53385, basePriority = 40, checkFunc = function(self, p) return self:CheckDivineStorm(p) end, displayName = "神圣风暴" },
     { actionName = "consecration",    spellID = 48819, basePriority = 50, checkFunc = function(self, p) return self:CheckConsecration(p) end, displayName = "奉献" },
     { actionName = "exorcism",        spellID = 48801, basePriority = 60, checkFunc = function(self, p) return self:CheckExorcism(p) end, displayName = "驱邪术" },
+    { actionName = "holy_wrath",      spellID = 48817, basePriority = 70, checkFunc = function(self, p) return self:CheckHolyWrath(p) end, displayName = "神圣愤怒" },
     
     -- 额外补充
     { actionName = "lionheart",      spellID = 20599, basePriority = 80, checkFunc = function(self, p) return self:CheckLionheart(p) end, displayName = "狮心" },
     
+    -- 斩杀阶段填充 (仅限斩杀阶段且无其他推荐时)
+    { actionName = "hammer_of_wrath_fill",  spellID = 48806, basePriority = 85, checkFunc = function(self, p) return self:CheckHammerOfWrathFill(p) end, displayName = "愤怒之锤(填充)" },
+    { actionName = "divine_storm_fill",     spellID = 53385, basePriority = 86, checkFunc = function(self, p) return self:CheckDivineStormFill(p) end, displayName = "神圣风暴(填充)" },
+    { actionName = "crusader_strike_fill",  spellID = 35395, basePriority = 87, checkFunc = function(self, p) return self:CheckCrusaderStrikeFill(p) end, displayName = "十字军打击(填充)" },
+
     -- 兜底 (固定极低优先级)
     { actionName = "divine_storm_fallback",   spellID = 53385, basePriority = 90, checkFunc = function(self, p) return self:CheckDivineStormFallback(p) end, displayName = "神圣风暴(兜底)" },
     { actionName = "crusader_strike_fallback", spellID = 35395, basePriority = 99, checkFunc = function(self, p) return self:CheckCrusaderStrikeFallback(p) end, displayName = "十字军打击(兜底)" },
 }
 
-function Module:GetDynamicPriority(actionName, isAOE, isExecute)
-    -- 正常阶段单体: 十字军(2) > 审判(3) > 神圣风暴(4) > 奉献(5) > 驱邪术(6)
-    -- 正常阶段AOE:  奉献(2) > 神圣风暴(3) > 十字军(4) > 审判(5) > 驱邪术(6)
-    -- 斩杀阶段单体: 愤怒之锤(2) > 审判(3) > 十字军(4) > 神圣风暴(5) > 驱邪术(6) > 奉献(7)
+function Module:GetDynamicPriority(actionName, isAOE, isExecute, ttd, enemyCount, hasSpecial)
+    -- 基础逻辑变量
+    local manaPct = (UnitPower("player") / UnitPowerMax("player") * 100)
+    local righteousnessStacks = self:GetBuffStacks("player", 1299090)
+    local isBossTarget = self:IsBoss("target")
 
+    -- Boss AOE 拦截: 必须叠满5层正义，否则降级为单体
+    if isAOE and isBossTarget and righteousnessStacks < 5 then
+        isAOE = false
+    end
+
+    -- 1. 斩杀阶段: 逻辑镜像单体，但加入愤怒之锤(2)
     if isExecute then
-        local map = { hammer_of_wrath = 2, judgement = 3, crusader_strike = 4, divine_storm = 5, exorcism = 6, consecration = 7 }
+        -- 基础序列：愤怒之锤(2) > 十字军(3) > 风暴(4) > 审判(5) > 奉献(6) > 驱邪(7) > 神圣愤怒(8)
+        local map = { hammer_of_wrath = 2, crusader_strike = 3, divine_storm = 4, judgement = 5, consecration = 6, exorcism = 7, holy_wrath = 8 }
+        
+        if righteousnessStacks >= 5 then
+            map.divine_storm = 3
+            map.crusader_strike = 4
+        end
+
+        if manaPct < 20 then
+            map.judgement = 3 -- 仅次于愤怒之锤
+            if righteousnessStacks >= 5 then
+                map.divine_storm = 4
+                map.crusader_strike = 5
+            else
+                map.crusader_strike = 4
+                map.divine_storm = 5
+            end
+        end
         return map[actionName] or 100
+
+    -- 2. AOE 阶段
     elseif isAOE then
-        local map = { consecration = 2, divine_storm = 3, crusader_strike = 4, judgement = 5, exorcism = 6 }
+        -- 基础 AOE 序列: 风暴(2) > 审判(2.5) > 奉献(3) > 十字军(4) > 神圣愤怒(7) > 驱邪(8)
+        local map = { divine_storm = 2, judgement = 2.5, consecration = 3, crusader_strike = 4, holy_wrath = 7, exorcism = 8 }
+        
+        -- 如果身边有亡灵/恶魔，神圣愤怒优先级提到十字军打击(4)之前
+        if hasSpecial then
+            map.holy_wrath = 3.5
+        end
+
+        -- 如果目标进入斩杀线 (如 Boss + 小怪场景)，依然优先打出愤怒之锤
+        local targetHP = self:IsValidEnemy("target") and (UnitHealth("target") / UnitHealthMax("target") * 100) or 100
+        if targetHP < 20 then
+            map.hammer_of_wrath = 1.5
+        end
+
+        -- 低价值 AOE: TTD <= 5s 时，奉献降级
+        if actionName == "consecration" and enemyCount > 1 and ttd <= 5 then
+            return 7.5 -- 确保在神圣愤怒(7)之后，但在驱邪(8)之前
+        end
         return map[actionName] or 100
+
+    -- 3. 单体阶段
     else
-        local map = { crusader_strike = 2, judgement = 3, divine_storm = 4, consecration = 5, exorcism = 6 }
+        local map
+        if hasSpecial then
+            -- 方案 B (亡灵/恶魔): 十字军(2) > 神圣风暴(3) > 审判(4) > 驱邪术(4.5) > 奉献(5) > 神圣愤怒(6.5)
+            map = { crusader_strike = 2, divine_storm = 3, judgement = 4, exorcism = 4.5, consecration = 5, holy_wrath = 6.5 }
+        else
+            -- 常规目标: 审判在奉献后 (十字军(2) > 风暴(3) > 奉献(4) > 审判(5) > 驱邪(6) > 神圣愤怒(7))
+            map = { crusader_strike = 2, divine_storm = 3, consecration = 4, judgement = 5, exorcism = 6, holy_wrath = 7 }
+        end
+        
+        -- 调整 1: 5层正义时，神圣风暴优先级大于十字军打击
+        if righteousnessStacks >= 5 then
+            local oldDS = map.divine_storm
+            local oldCS = map.crusader_strike
+            map.divine_storm = oldCS
+            map.crusader_strike = oldDS
+        end
+
+        -- 调整 2: 蓝量低于 20% 时，审判优先级升至最高 (2) 确保回蓝
+        if manaPct < 20 then
+            map.judgement = 2
+            if righteousnessStacks >= 5 then
+                map.divine_storm = 3
+                map.crusader_strike = 4
+            else
+                map.crusader_strike = 3
+                map.divine_storm = 4
+            end
+        end
+        
         return map[actionName] or 100
     end
+end
+
+function Module:CheckHolyWrath(p)
+    -- 检测 10 码内是否有亡灵/恶魔
+    if not self:HasSpecialEnemyInRange(10) then
+        self:SetHUDReason("holy_wrath", false, "10码内无亡灵/恶魔目标")
+        return false
+    end
+
+    -- 单体情况下的蓝量检查
+    local isAOE = self:CountEnemiesInRange(8) > 1
+    local manaPct = (UnitPower("player") / UnitPowerMax("player") * 100)
+    if not isAOE and manaPct <= 50 then
+        self:SetHUDReason("holy_wrath", false, string.format("单体蓝量低(%.1f%% <= 50%%)", manaPct))
+        return false
+    end
+
+    local ready, reason = self:IsSpellReady(48817, p)
+    if not ready then self:SetHUDReason("holy_wrath", false, reason); return false end
+    
+    self:SetHUDReason("holy_wrath", true, "就绪"); return true, "player"
 end
 
 function Module:CheckBurstConditions()
@@ -529,6 +675,12 @@ end
 function Module:CheckConsecration(p)
     if not self:IsValidEnemy("target") then self:SetHUDReason("consecration", false, "无有效敌人目标"); return false end
     
+    -- 站定检测
+    if GetUnitSpeed("player") > 0 then
+        self:SetHUDReason("consecration", false, "移动中")
+        return false
+    end
+
     local manaPct = (UnitPower("player") / UnitPowerMax("player") * 100)
     if manaPct < 40 then
         self:SetHUDReason("consecration", false, string.format("蓝量低(%.1f%% < 40%%)", manaPct))
@@ -555,6 +707,21 @@ function Module:CheckLionheart(p)
     return false
 end
 
+function Module:CheckHammerOfWrathFill(p)
+    if not self.lastIsExecute then return false end
+    return self:CheckHammerOfWrath(p)
+end
+
+function Module:CheckDivineStormFill(p)
+    if not self.lastIsExecute then return false end
+    return self:CheckDivineStorm(p)
+end
+
+function Module:CheckCrusaderStrikeFill(p)
+    if not self.lastIsExecute then return false end
+    return self:CheckCrusaderStrike(p)
+end
+
 function Module:CheckDivineStormFallback(p)
     if not self:IsValidEnemy("target") then return false end
     local minR, maxR = self:GetUnitRange("target")
@@ -579,8 +746,21 @@ function Module:InsertPaladinSkills()
     if not Hekili or not Hekili.DisplayPool then return end
     
     self:UpdateTTD()
-    local isExecute = self:IsValidEnemy("target") and (UnitHealth("target") / UnitHealthMax("target") * 100) < 20
-    local isAOE = self:CountEnemiesInRange(8) > 2
+    local ttd = self:GetTTD()
+    local enemyCount8 = self:CountEnemiesInRange(8)
+    local enemyCount20 = self:CountEnemiesInRange(20)
+    
+    local targetHP = self:IsValidEnemy("target") and (UnitHealth("target") / UnitHealthMax("target") * 100) or 100
+    local isExecute = false
+    
+    -- 斩杀判定：20码内只有一个敌对目标，且该目标血量 < 20%
+    if enemyCount20 == 1 and targetHP < 20 then
+        isExecute = true
+    end
+    
+    self.lastIsExecute = isExecute
+    local isAOE = enemyCount8 > 1
+    local hasSpecial8 = self:HasSpecialEnemyInRange(10)
     
     -- 准备排序列表
     local activeSkills = {}
@@ -592,7 +772,7 @@ function Module:InsertPaladinSkills()
             local currentPriority = def.basePriority
             -- 动态优先级调整
             if currentPriority >= 10 and currentPriority < 80 then
-                currentPriority = self:GetDynamicPriority(def.actionName, isAOE, isExecute)
+                currentPriority = self:GetDynamicPriority(def.actionName, isAOE, isExecute, ttd, enemyCount8, hasSpecial8)
             end
             
             table.insert(activeSkills, {
