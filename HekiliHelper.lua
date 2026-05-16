@@ -341,6 +341,13 @@ function HekiliHelper:OnInitialize()
         self:DebugPrint("|cFF00FF00[HekiliHelper]|r DeathKnightSkills模块对象已存在")
     end
 
+    if not self.UnholyDKSkills then
+        self.UnholyDKSkills = {}
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r 创建UnholyDKSkills模块对象")
+    else
+        self:DebugPrint("|cFF00FF00[HekiliHelper]|r UnholyDKSkills模块对象已存在")
+    end
+
     if not self.RetPaladinSkills then
         self.RetPaladinSkills = {}
         self:DebugPrint("|cFF00FF00[HekiliHelper]|r 创建RetPaladinSkills模块对象")
@@ -489,9 +496,10 @@ function HekiliHelper:InitializeModules()
         table.insert(modules, { name = "HealingPriestSkills", ref = self.HealingPriestSkills })
     end
 
-    -- DK模块（仅DK，TTD作为传染的依赖功能在DeathKnightSkills内按需初始化）
+    -- DK模块
     if playerClass == "DEATHKNIGHT" then
         table.insert(modules, { name = "DeathKnightSkills", ref = self.DeathKnightSkills })
+        table.insert(modules, { name = "UnholyDKSkills", ref = self.UnholyDKSkills })
     end
 
     -- 惩戒骑模块

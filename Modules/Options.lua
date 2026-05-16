@@ -646,21 +646,21 @@ function Module:GetOptions()
                 }
             },
             
-            deathKnight = {
+            frostDK = {
                 type = "group",
-                name = "死亡骑士",
+                name = "冰霜骑士",
                 order = 3.3,
                 args = {
                     header = {
                         type = "header",
-                        name = "死亡骑士设置",
+                        name = "冰霜骑士设置",
                         order = 1,
                         width = "full"
                     },
                     
                     desc = {
                         type = "description",
-                        name = "为死亡骑士提供智能技能推荐。\n\n" ..
+                        name = "为冰霜死亡骑士提供智能技能推荐。\n\n" ..
                                "|cFF00FF001. 群体感染 (AOE扩散):|r\n" ..
                                "当装备|cFF00FFFF[传染雕文]|r，当前目标有双病，且15码内有|cFFFFD7001个及以上|r敌对目标无疾病时触发。\n\n" ..
                                "|cFF00FF002. 刷新疾病 (单体刷新):|r\n" ..
@@ -675,7 +675,7 @@ function Module:GetOptions()
                     enabled = {
                         type = "toggle",
                         name = "启用",
-                        desc = "启用或禁用死亡骑士技能推荐功能。",
+                        desc = "启用或禁用冰霜骑士技能推荐功能。",
                         order = 10,
                         width = "full",
                         get = function()
@@ -683,20 +683,94 @@ function Module:GetOptions()
                                 return true
                             end
                             local db = HekiliHelper.DB.profile
-                            if not db.deathKnight then
-                                db.deathKnight = { enabled = true }
+                            if not db.frostDK then
+                                db.frostDK = { enabled = true }
                             end
-                            return db.deathKnight.enabled ~= false
+                            return db.frostDK.enabled ~= false
                         end,
                         set = function(info, val)
                             if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
                                 return
                             end
                             local db = HekiliHelper.DB.profile
-                            if not db.deathKnight then
-                                db.deathKnight = {}
+                            if not db.frostDK then
+                                db.frostDK = {}
                             end
-                            db.deathKnight.enabled = val
+                            db.frostDK.enabled = val
+                        end
+                    },
+                }
+            },
+            
+            unholyDK = {
+                type = "group",
+                name = "邪恶骑士",
+                order = 3.35,
+                args = {
+                    header = {
+                        type = "header",
+                        name = "邪恶骑士设置",
+                        order = 1,
+                        width = "full"
+                    },
+                    
+                    enabled = {
+                        type = "toggle",
+                        name = "启用",
+                        desc = "启用或禁用邪恶骑士技能推荐功能。",
+                        order = 10,
+                        width = "full",
+                        get = function()
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return true
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.unholyDK then
+                                db.unholyDK = { enabled = true }
+                            end
+                            return db.unholyDK.enabled ~= false
+                        end,
+                        set = function(info, val)
+                            if not HekiliHelper or not HekiliHelper.DB or not HekiliHelper.DB.profile then
+                                return
+                            end
+                            local db = HekiliHelper.DB.profile
+                            if not db.unholyDK then
+                                db.unholyDK = {}
+                            end
+                            db.unholyDK.enabled = val
+                        end
+                    },
+
+                    gargoyleSnapshotBuffs = {
+                        type = "input",
+                        name = "天鬼快照 Buff 列表",
+                        desc = "仅当以下所有 Buff 均存在时才推荐天鬼。支持 ID 或名称，用逗号分隔。\n|cFFFFFF00注意：|r天鬼召唤时仅吃攻强快照，过程中受急速实时加成。",
+                        order = 20,
+                        width = "full",
+                        get = function()
+                            if not HekiliHelper.DB.profile.unholyDK then HekiliHelper.DB.profile.unholyDK = {} end
+                            return HekiliHelper.DB.profile.unholyDK.gargoyleSnapshotBuffs or ""
+                        end,
+                        set = function(info, val)
+                            if not HekiliHelper.DB.profile.unholyDK then HekiliHelper.DB.profile.unholyDK = {} end
+                            HekiliHelper.DB.profile.unholyDK.gargoyleSnapshotBuffs = val
+                        end
+                    },
+
+                    armySnapshotBuffs = {
+                        type = "input",
+                        name = "大军快照 Buff 列表",
+                        desc = "仅当以下所有 Buff 均存在时才推荐死亡大军。支持 ID 或名称，用逗号分隔。\n|cFFFFFF00注意：|r大军召唤时受急速快照加成。",
+                        order = 21,
+                        width = "full",
+                        get = function()
+                            if not HekiliHelper.DB.profile.unholyDK then HekiliHelper.DB.profile.unholyDK = {} end
+                            return HekiliHelper.DB.profile.unholyDK.armySnapshotBuffs or ""
+                        end,
+                        set = function(info, val)
+                            if not HekiliHelper.DB.profile.unholyDK then HekiliHelper.DB.profile.unholyDK = {} end
+                            HekiliHelper.DB.profile.unholyDK.armySnapshotBuffs = val
                         end
                     },
                 }

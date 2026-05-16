@@ -221,7 +221,7 @@ end
 
 function Module:ProcessPestilenceOverlay()
     -- 检查整体开关
-    if not HekiliHelper.DB or not HekiliHelper.DB.profile or not HekiliHelper.DB.profile.deathKnight or not HekiliHelper.DB.profile.deathKnight.enabled then
+    if not HekiliHelper.DB or not HekiliHelper.DB.profile or not HekiliHelper.DB.profile.frostDK or not HekiliHelper.DB.profile.frostDK.enabled then
         if self.IsActive then
             if self.OverlayFrame then self.OverlayFrame:Hide() end
             self.IsActive = false
