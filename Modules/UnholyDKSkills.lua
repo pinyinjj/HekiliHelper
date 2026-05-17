@@ -759,7 +759,7 @@ function Module:CheckBloodPresence(p)
 
     if self.gargoyleSummonTime == 0 or timeSinceGargoyle >= 30 then
         should = true
-        priority = 28
+        priority = 11.5 -- 优先级高于血打(12)，确保尽快切回红脸
         reason = "无天鬼-切红脸"
     end
 
