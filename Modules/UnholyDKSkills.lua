@@ -20,6 +20,7 @@ Module.armySummonTime = 0
 Module.lastPestilenceTime = 0
 Module.lastIcyTouchTime = 0
 Module.lastPlagueStrikeTime = 0
+Module.CurrentQueue = {}
 
 -- 技能ID定义
 local ICY_TOUCH = 49909
@@ -47,6 +48,12 @@ local UNHOLY_PRESENCE = 48266
 -- Buff/Debuff ID
 local FROST_FEVER = 55095
 local BLOOD_PLAGUE = 55078
+
+-- 符文类型常量 (Blizzard API: 1-血, 2-冰, 3-邪, 4-死)
+local RUNE_BLOOD = 1
+local RUNE_FROST = 2
+local RUNE_UNHOLY = 3
+local RUNE_DEATH = 4
 local SUDDEN_DOOM = 49530
 local HORN_OF_WINTER_BUFF = 57330
 local GHOUL_FRENZY_BUFF = 63560 -- 狂乱BUFF
@@ -98,6 +105,7 @@ function Module:Initialize()
     
     return success
 end
+
 function Module:InitializeEvents()
     if self.EventFrame then return end
     local f = CreateFrame("Frame")
@@ -113,7 +121,6 @@ function Module:InitializeEvents()
             return
         end
         if event == "PLAYER_TARGET_CHANGED" then
-
             self.lastPestilenceTime = 0
             self.lastIcyTouchTime = 0
             self.lastPlagueStrikeTime = 0
@@ -150,7 +157,7 @@ function Module:CreateStatusHUD()
     if self.HUDFrame then return end
 
     local frame = CreateFrame("Frame", "HekiliHelperUnholyHUD", UIParent, "BackdropTemplate")
-    frame:SetSize(250, 450)
+    frame:SetSize(250, 500)
     frame:SetPoint("CENTER", -300, 0)
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -191,17 +198,36 @@ function Module:UpdateHUDText()
     local isAOE = enemyCount8 > 1
     local modeStr = isAOE and "|cFFFFFF00AOE|r" or "|cFF00FF00单体|r"
     
-    local nextType = NextTypeMap[self.LastCastType] or "未知"
-    local typeColor = { [TYPE_FROST] = "|cFF00FFFF冰|r", [TYPE_UNHOLY] = "|cFF00FF00邪|r", [TYPE_BLOOD] = "|cFFFF0000血|r" }
+    local curB = self:GetRuneCount(RUNE_BLOOD)
+    local curF = self:GetRuneCount(RUNE_FROST)
+    local curU = self:GetRuneCount(RUNE_UNHOLY)
 
+    local nextType = NextTypeMap[self.LastCastType] or TYPE_FROST
+    local seqStr = ""
+    if nextType == TYPE_FROST then seqStr = "->|cFF00FFFF冰|r  |cFF00FF00邪|r  |cFFFF0000血|r"
+    elseif nextType == TYPE_UNHOLY then seqStr = "  |cFF00FFFF冰|r ->|cFF00FF00邪|r  |cFFFF0000血|r"
+    elseif nextType == TYPE_BLOOD then seqStr = "  |cFF00FFFF冰|r  |cFF00FF00邪|r ->|cFFFF0000血|r"
+    else seqStr = "未知"
+    end
+
+    table.insert(lines, string.format("|cFFFFFF00[当前推送 (Queue)]|r"))
+    local hasRec = false
+    if self.CurrentQueue and #self.CurrentQueue > 0 then
+        for i, info in ipairs(self.CurrentQueue) do
+            table.insert(lines, string.format("  Slot%d. |cFF00FF00%s|r", info.slot, info.name))
+            hasRec = true
+        end
+    end
+    if not hasRec then table.insert(lines, "  |cFF888888Hekili队列为空|r") end
+
+    table.insert(lines, "----------------------")
     table.insert(lines, string.format("|cFFFFFF00[全局状态]|r"))
-    table.insert(lines, string.format("当前序列: %s -> %s", typeColor[self.LastCastType] or self.LastCastType, typeColor[nextType] or nextType))
-    table.insert(lines, string.format("符文能量: %d", UnitPower("player")))
-    table.insert(lines, string.format("当前模式: %s (敌人数:%d)", modeStr, enemyCount8))
-    table.insert(lines, string.format("预计死亡时间(TTD): %.1fs", self:GetTTD()))
+    table.insert(lines, string.format("冰:%d  邪:%d  血:%d (含万能)", curF, curU, curB))
+    table.insert(lines, string.format("能量: %d  TTD: %.1fs", UnitPower("player"), self:GetTTD()))
+    table.insert(lines, string.format("序列: %s (Last:%s)", seqStr, self.LastCastType))
     
     table.insert(lines, "----------------------")
-
+    table.insert(lines, string.format("|cFFFFFF00[所有技能明细]|r"))
     for _, def in ipairs(self.SkillDefinitions) do
         local data = self.HUDData[def.actionName]
         if data then
@@ -286,15 +312,48 @@ function Module:CountEnemiesInRange(range)
     return count
 end
 
+function Module:GetRuneCount(runeType)
+    local count = 0
+    local now = GetTime()
+    for i = 1, 6 do
+        local start, duration, ready = GetRuneCooldown(i)
+        local rType = GetRuneType(i)
+        local isReady = (ready or not start or start == 0 or (start + duration - now) <= 0.1)
+        if isReady and (rType == runeType or rType == 4) then
+            count = count + 1
+        end
+    end
+    return count
+end
+
 function Module:IsSpellReady(id, p, ignoreGCD)
     local s, d = GetSpellCooldown(id)
-    local gS, gD = GetSpellCooldown(61304)
-    if not s or s == 0 then return true, "已就绪" end
-    if not ignoreGCD and gS and gS > 0 and s == gS and d == gD then
-        return true, "GCD中"
+    local _, gD = GetSpellCooldown(61304)
+    
+    local isRuneSpell = (id == ICY_TOUCH or id == PLAGUE_STRIKE or id == SCOURGE_STRIKE or 
+                         id == BLOOD_STRIKE or id == BLOOD_BOIL or id == PESTILENCE or id == DEATH_AND_DECAY)
+
+    if isRuneSpell then
+        if id ~= DEATH_AND_DECAY then
+            if not ignoreGCD and gD and gD > 0 and d > 0 and d <= gD then
+                return true, "GCD中"
+            end
+            return true, "已就绪"
+        else
+            if not s or s == 0 or d <= 1.5 or (gD and d <= gD) then return true, "已就绪" end
+            if d > 1.5 and d <= 11 then return true, "符文等待" end
+            local cd = s + d - GetTime()
+            if cd <= 0.1 then return true, "已就绪" end
+            return false, string.format("CD(%.1fs)", cd)
+        end
     end
+
+    if not s or s == 0 or (d > 0 and gD > 0 and d <= gD) then 
+        return true, "已就绪" 
+    end
+    
     local cd = s + d - GetTime()
-    if cd <= 0 then return true, "已就绪" end
+    if cd <= 0.1 then return true, "已就绪" end
     return false, string.format("CD(%.1fs)", cd)
 end
 
@@ -331,40 +390,28 @@ function Module:GetBuffTimeLeft(unit, spellID)
     return 0
 end
 
-function Module:GetRuneCount(runeType)
-    local count = 0
-    for i = 1, 6 do
-        local _, _, ready = GetRuneCooldown(i)
-        if ready and (GetRuneType(i) == runeType or GetRuneType(i) == 4) then
-            count = count + 1
+function Module:IsArmyTime()
+    if not self:IsBoss("target") then return false, "非Boss" end
+    local ready = self:IsSpellReady(ARMY_OF_THE_DEAD, nil, true)
+    if not ready then return false, "条件不足" end
+    if self:GetTTD() < 40 then return false, "条件不足" end
+    if GetShapeshiftForm() ~= 3 then return false, "等待绿脸" end
+    if not self:HasBuff("player", 2825) and not self:HasBuff("player", 32182) then return false, "等待嗜血" end
+    
+    local db = HekiliHelper.DB.profile.unholyDK
+    local buffs = { strsplit(",", (db and db.armySnapshotBuffs or ""):gsub("%s+", "")) }
+    for _, b in ipairs(buffs) do
+        if b ~= "" and not (tonumber(b) and self:HasBuff("player", tonumber(b)) or self:HasBuffByName("player", b)) then
+            return false, "等待快照:"..b
         end
     end
-    return count
-end
-
-function Module:IsPoolingForArmy()
-    if GetShapeshiftForm() ~= 3 then return false end
-    if not self:IsBoss("target") then return false end
-    local ready = self:IsSpellReady(ARMY_OF_THE_DEAD, nil, true)
-    return ready
+    return true, "时机已到"
 end
 
 function Module:CanConsumeRunes(b, u, f)
-    local curB = self:GetRuneCount(1)
-    local curU = self:GetRuneCount(2)
-    local curF = self:GetRuneCount(3)
-    
-    if curB < b or curU < u or curF < f then return false end
-    if not self:IsPoolingForArmy() then return true end
-    if self:IsSpellReady(EMPOWER_RUNE_WEAPON, nil, true) then return true end
-    
-    local leaveB = 1
-    if self:IsSpellReady(BLOOD_TAP, nil, true) then leaveB = 0 end
-    
-    if (curB - b) < leaveB then return false end
-    if (curU - u) < 1 then return false end
-    if (curF - f) < 1 then return false end
-    
+    if b > 0 and self:GetRuneCount(RUNE_BLOOD) < b then return false end
+    if u > 0 and self:GetRuneCount(RUNE_UNHOLY) < u then return false end
+    if f > 0 and self:GetRuneCount(RUNE_FROST) < f then return false end
     return true
 end
 
@@ -418,36 +465,34 @@ end
 function Module:CheckERW(p)
     local ready, reason = self:IsSpellReady(EMPOWER_RUNE_WEAPON, p)
     if not ready then self:SetHUDReason("empower_rune_weapon", false, reason); return false end
-    
-    if self:IsPoolingForArmy() then
-        if self:GetRuneCount(1) < 1 or self:GetRuneCount(2) < 1 or self:GetRuneCount(3) < 1 then
-            self:SetHUDReason("empower_rune_weapon", true, "大军蓄能-使用增效")
+
+    if self:IsArmyTime() then
+        if self:GetRuneCount(RUNE_BLOOD) < 1 or self:GetRuneCount(RUNE_UNHOLY) < 1 or self:GetRuneCount(RUNE_FROST) < 1 then
+            self:SetHUDReason("empower_rune_weapon", true, "大军时机-使用增效")
             return true, "player"
         end
     end
-    
-    local should = self:GetRuneCount(1) == 0 and self:GetRuneCount(2) == 0 and self:GetRuneCount(3) == 0
-    self:SetHUDReason("empower_rune_weapon", should, should and "符文全空-补" or "尚有符文")
-    return should, "player"
-end
 
+    self:SetHUDReason("empower_rune_weapon", false, "非大军/无需补")
+    return false
+end
 function Module:CheckBloodTap(p)
     local ready, reason = self:IsSpellReady(BLOOD_TAP, p)
     if not ready then self:SetHUDReason("blood_tap", false, reason); return false end
 
-    if self:IsPoolingForArmy() then
-        if self:GetRuneCount(1) < 1 then
-            self:SetHUDReason("blood_tap", true, "大军蓄能-分流")
+    if self:IsArmyTime() then
+        if self:GetRuneCount(RUNE_BLOOD) < 1 then
+            self:SetHUDReason("blood_tap", true, "大军时机-分流")
             return true, "player"
         end
     end
 
-    if self:GetRuneCount(2) == 0 and (not self:HasBuff("player", BONE_SHIELD) or not self:HasBuff("pet", GHOUL_FRENZY_BUFF)) then
+    if self:GetRuneCount(RUNE_UNHOLY) == 0 and (not self:HasBuff("player", BONE_SHIELD) or not self:HasBuff("pet", GHOUL_FRENZY_BUFF)) then
         self:SetHUDReason("blood_tap", true, "润滑-补Buff")
         return true, "player"
     end
     local nextType = NextTypeMap[self.LastCastType]
-    if nextType == TYPE_UNHOLY and GetShapeshiftForm() ~= 3 and self:GetRuneCount(2) == 0 then
+    if nextType == TYPE_UNHOLY and GetShapeshiftForm() ~= 3 and self:GetRuneCount(RUNE_UNHOLY) == 0 then
         self:SetHUDReason("blood_tap", true, "润滑-切脸")
         return true, "player"
     end
@@ -476,7 +521,7 @@ end
 function Module:CheckDnD(p)
     local ready, reason = self:IsSpellReady(DEATH_AND_DECAY, p)
     if not ready then self:SetHUDReason("death_and_decay", false, reason); return false end
-    if not self:CanConsumeRunes(1, 1, 1) then self:SetHUDReason("death_and_decay", false, "缺少符文/大军蓄能"); return false end
+    if not self:CanConsumeRunes(1, 1, 1) then self:SetHUDReason("death_and_decay", false, "缺少符文"); return false end
     
     if self:CountEnemiesInRange(8) > 1 and not self:IsBoss("target") then 
         self:SetHUDReason("death_and_decay", true, "AOE优先")
@@ -497,26 +542,50 @@ function Module:CheckDnD(p)
 end
 
 function Module:CheckIcyTouch(p)
-    if self:GetDebuffTimeLeft("target", FROST_FEVER) <= 2 then
-        local ready, reason = self:IsSpellReady(ICY_TOUCH, p)
-        if ready and self:CanConsumeRunes(0, 0, 1) then self:SetHUDReason("icy_touch", true, "补疾病"); return true, "target" end
-    end
-    if NextTypeMap[self.LastCastType] ~= TYPE_FROST then self:SetHUDReason("icy_touch", false, "等待序列"); return false end
     local ready, reason = self:IsSpellReady(ICY_TOUCH, p)
-    local canCast = ready and self:CanConsumeRunes(0, 0, 1)
-    self:SetHUDReason("icy_touch", canCast, canCast and "已就绪" or "大军蓄能/CD")
+    local hasRunes = self:CanConsumeRunes(0, 0, 1)
+
+    if self:GetDebuffTimeLeft("target", FROST_FEVER) <= 0 then
+        if ready and hasRunes then 
+            self:SetHUDReason("icy_touch", true, "无疾病强制")
+            return true, "target" 
+        elseif not hasRunes then
+            self:SetHUDReason("icy_touch", false, "需强制-缺符文")
+            return false
+        end
+    end
+
+    if NextTypeMap[self.LastCastType] ~= TYPE_FROST then 
+        self:SetHUDReason("icy_touch", false, "等待序列")
+        return false 
+    end
+
+    local canCast = ready and hasRunes
+    self:SetHUDReason("icy_touch", canCast, canCast and "序列就绪" or "无符文/CD")
     return canCast, "target"
 end
 
 function Module:CheckPlagueStrike(p)
-    if self:GetDebuffTimeLeft("target", BLOOD_PLAGUE) <= 2 then
-        local ready, reason = self:IsSpellReady(PLAGUE_STRIKE, p)
-        if ready and self:CanConsumeRunes(0, 1, 0) then self:SetHUDReason("plague_strike", true, "补疾病"); return true, "target" end
-    end
-    if NextTypeMap[self.LastCastType] ~= TYPE_UNHOLY then self:SetHUDReason("plague_strike", false, "等待序列"); return false end
     local ready, reason = self:IsSpellReady(PLAGUE_STRIKE, p)
-    local canCast = ready and self:CanConsumeRunes(0, 1, 0)
-    self:SetHUDReason("plague_strike", canCast, canCast and "已就绪" or "大军蓄能/CD")
+    local hasRunes = self:CanConsumeRunes(0, 1, 0)
+
+    if self:GetDebuffTimeLeft("target", BLOOD_PLAGUE) <= 0 then
+        if ready and hasRunes then 
+            self:SetHUDReason("plague_strike", true, "无疾病强制")
+            return true, "target" 
+        elseif not hasRunes then
+            self:SetHUDReason("plague_strike", false, "需强制-缺符文")
+            return false
+        end
+    end
+
+    if NextTypeMap[self.LastCastType] ~= TYPE_UNHOLY then 
+        self:SetHUDReason("plague_strike", false, "等待序列")
+        return false 
+    end
+
+    local canCast = ready and hasRunes
+    self:SetHUDReason("plague_strike", canCast, canCast and "序列就绪" or "无符文/CD")
     return canCast, "target"
 end
 
@@ -526,7 +595,7 @@ function Module:CheckBloodStrike(p)
     if self:GetBuffTimeLeft("player", DESOLATION_BUFF) > 5 then self:SetHUDReason("blood_strike", false, "孤寂充足"); return false end
     local ready, reason = self:IsSpellReady(BLOOD_STRIKE, p)
     local canCast = ready and self:CanConsumeRunes(1, 0, 0)
-    self:SetHUDReason("blood_strike", canCast, canCast and "已就绪" or "大军蓄能/CD")
+    self:SetHUDReason("blood_strike", canCast, canCast and "已就绪" or "无符文/CD")
     return canCast, "target"
 end
 
@@ -599,7 +668,7 @@ function Module:CheckPestilence(p)
     if self.lastPestilenceTime > math.max(self.lastIcyTouchTime, self.lastPlagueStrikeTime) then self:SetHUDReason("pestilence", false, "已传染"); return false end
     local ready, reason = self:IsSpellReady(PESTILENCE, p)
     local canCast = ready and self:CanConsumeRunes(1, 0, 0)
-    self:SetHUDReason("pestilence", canCast, canCast and "已就绪" or "大军蓄能/CD")
+    self:SetHUDReason("pestilence", canCast, canCast and "已就绪" or "无符文/CD")
     return canCast, "target"
 end
 
@@ -609,7 +678,7 @@ function Module:CheckBloodBoil(p)
     if NextTypeMap[self.LastCastType] ~= TYPE_BLOOD then self:SetHUDReason("blood_boil", false, "等待序列"); return false end
     local ready, reason = self:IsSpellReady(BLOOD_BOIL, p)
     local canCast = ready and self:CanConsumeRunes(1, 0, 0)
-    self:SetHUDReason("blood_boil", canCast, canCast and "已就绪" or "大军蓄能/CD")
+    self:SetHUDReason("blood_boil", canCast, canCast and "已就绪" or "无符文/CD")
     return canCast, "player"
 end
 
@@ -621,7 +690,7 @@ function Module:CheckHornOfWinter(p)
         self:SetHUDReason("horn_of_winter", not h, h and "已有BUFF" or "脱战补")
         return not h, "player"
     end
-    local empty = self:GetRuneCount(1) == 0 and self:GetRuneCount(2) == 0 and self:GetRuneCount(3) == 0
+    local empty = self:GetRuneCount(RUNE_BLOOD) == 0 and self:GetRuneCount(RUNE_UNHOLY) == 0 and self:GetRuneCount(RUNE_FROST) == 0
     self:SetHUDReason("horn_of_winter", empty, empty and "能量填充" or "尚有符文")
     return empty, "player"
 end
@@ -641,32 +710,42 @@ function Module:CheckGargoyle(p)
 end
 
 function Module:CheckArmy(p)
-    if not self:IsBoss("target") then self:SetHUDReason("army_of_the_dead", false, "非Boss"); return false end
-    local ready, reason = self:IsSpellReady(ARMY_OF_THE_DEAD, p)
-    if not ready or self:GetTTD() < 40 then self:SetHUDReason("army_of_the_dead", false, reason or "条件不足"); return false end
-    if GetShapeshiftForm() ~= 3 then self:SetHUDReason("army_of_the_dead", false, "等待绿脸"); return false end
-    if not self:HasBuff("player", 2825) and not self:HasBuff("player", 32182) then self:SetHUDReason("army_of_the_dead", false, "等待嗜血"); return false end
-    local db = HekiliHelper.DB.profile.unholyDK
-    local buffs = { strsplit(",", (db and db.armySnapshotBuffs or ""):gsub("%s+", "")) }
-    for _, b in ipairs(buffs) do
-        if b ~= "" and not (tonumber(b) and self:HasBuff("player", tonumber(b)) or self:HasBuffByName("player", b)) then
-            self:SetHUDReason("army_of_the_dead", false, "等待快照:"..b); return false
-        end
+    local isTime, reason = self:IsArmyTime()
+    if not isTime then self:SetHUDReason("army_of_the_dead", false, reason); return false end
+    
+    if self:GetRuneCount(RUNE_BLOOD) >= 1 and self:GetRuneCount(RUNE_UNHOLY) >= 1 and self:GetRuneCount(RUNE_FROST) >= 1 then
+        self:SetHUDReason("army_of_the_dead", true, "快照完成"); return true, "player"
+    else
+        self:SetHUDReason("army_of_the_dead", false, "等待增效/符文"); return false
     end
-    self:SetHUDReason("army_of_the_dead", true, "快照完成"); return true, "player"
 end
 
 function Module:CheckDeathCoil(p)
+    local def
+    for _, d in ipairs(self.SkillDefinitions) do
+        if d.actionName == "death_coil" then def = d; break end
+    end
+
     local ready, reason = self:IsSpellReady(DEATH_COIL, p)
-    if not ready then self:SetHUDReason("death_coil", false, reason); return false end
+    if not ready then 
+        if def then def.basePriority = 30 end
+        self:SetHUDReason("death_coil", false, reason)
+        return false 
+    end
     
-    if self:HasBuff("player", SUDDEN_DOOM) then self:SetHUDReason("death_coil", true, "触发末日"); return true, "target" end
     local rp = UnitPower("player")
+    
+    if rp > 80 then
+        if def then def.basePriority = 9.5 end
+        self:SetHUDReason("death_coil", true, "高能泄泻")
+        return true, "target"
+    end
+    
+    if def then def.basePriority = 30 end
+    
     if rp < 40 then self:SetHUDReason("death_coil", false, "能量不足"); return false end
-    if self:GetRuneCount(1) == 0 and self:GetRuneCount(2) == 0 and self:GetRuneCount(3) == 0 then self:SetHUDReason("death_coil", true, "真空填充"); return true, "target" end
-    local _, maxR = self:GetUnitRange("target")
-    if rp > 80 and maxR and maxR > 8 then self:SetHUDReason("death_coil", true, "远程泄能"); return true, "target" end
-    if rp >= 110 then self:SetHUDReason("death_coil", true, "能量溢出"); return true, "target" end
+    if self:GetRuneCount(RUNE_BLOOD) == 0 and self:GetRuneCount(RUNE_UNHOLY) == 0 and self:GetRuneCount(RUNE_FROST) == 0 then self:SetHUDReason("death_coil", true, "真空填充"); return true, "target" end
+    
     self:SetHUDReason("death_coil", false, "低优先级"); return false
 end
 
@@ -694,32 +773,55 @@ function Module:InsertUnholySkills()
             if isEnabled and should then table.insert(activeSkills, def) end
         end
     end
-    self:UpdateHUDText()
-    if not isEnabled then return end
+    
+    -- 记录当前推送给 Hekili 的队列，用于 HUD 显示
+    self.CurrentQueue = {}
     table.sort(activeSkills, function(a, b) return a.basePriority < b.basePriority end)
-    for dispName, UI in pairs(Hekili.DisplayPool) do
-        local lowerName = dispName:lower()
-        if (lowerName == "primary" or lowerName == "aoe") and UI.Active and UI.alpha > 0 then
-            local Queue = UI.Recommendations
-            if Queue then
-                for i = 1, 10 do if Queue[i] and Queue[i].isUnholySkill then Queue[i] = nil end end
-                local skillsFound = 0
-                for _, skillDef in ipairs(activeSkills) do
-                    if skillsFound < 4 then
-                        skillsFound = skillsFound + 1
-                        local ability = Hekili.Class.abilities[skillDef.actionName]
-                        if not ability then
-                            local n, _, t = GetSpellInfo(skillDef.spellID)
-                            if n then Hekili.Class.abilities[skillDef.actionName] = { key = skillDef.actionName, name = n, texture = t, id = skillDef.spellID, cast = 0, gcd = "off" }; ability = Hekili.Class.abilities[skillDef.actionName] end
-                        end
-                        if ability then
-                            local slot = Queue[skillsFound] or {}
-                            slot.actionName, slot.actionID, slot.texture, slot.isUnholySkill, slot.display, slot.time, slot.exact_time = skillDef.actionName, skillDef.spellID, ability.texture, true, dispName, 0, GetTime()
-                            Queue[skillsFound] = slot; UI.NewRecommendations = true
+    
+    if isEnabled then
+        for dispName, UI in pairs(Hekili.DisplayPool) do
+            local lowerName = dispName:lower()
+            if (lowerName == "primary" or lowerName == "aoe") and UI.Active and UI.alpha > 0 then
+                local Queue = UI.Recommendations
+                if Queue then
+                    -- 清理旧的推荐
+                    for i = 1, 10 do if Queue[i] and Queue[i].isUnholySkill then Queue[i] = nil end end
+                    
+                    local skillsFound = 0
+                    for _, skillDef in ipairs(activeSkills) do
+                        if skillsFound < 4 then
+                            skillsFound = skillsFound + 1
+                            local ability = Hekili.Class.abilities[skillDef.actionName]
+                            if not ability then
+                                local n, _, t = GetSpellInfo(skillDef.spellID)
+                                if n then 
+                                    Hekili.Class.abilities[skillDef.actionName] = { 
+                                        key = skillDef.actionName, name = n, texture = t, id = skillDef.spellID, cast = 0, gcd = "off" 
+                                    }
+                                    ability = Hekili.Class.abilities[skillDef.actionName]
+                                end
+                            end
+                            if ability then
+                                local slot = Queue[skillsFound] or {}
+                                slot.actionName = skillDef.actionName
+                                slot.actionID = skillDef.spellID
+                                slot.texture = ability.texture
+                                slot.isUnholySkill = true
+                                slot.display = dispName
+                                slot.time = 0
+                                slot.exact_time = GetTime()
+                                slot.resources = nil 
+                                
+                                Queue[skillsFound] = slot
+                                UI.NewRecommendations = true
+                                table.insert(self.CurrentQueue, { slot = skillsFound, name = skillDef.displayName })
+                            end
                         end
                     end
                 end
             end
         end
     end
+    
+    self:UpdateHUDText()
 end
