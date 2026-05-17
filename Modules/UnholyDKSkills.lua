@@ -716,7 +716,7 @@ function Module:CheckUnholyPresence(p)
     local reason = ""
     local priority = 25
 
-    if self.gargoyleSummonTime > 0 and timeSinceGargoyle < 30 then
+    if self.gargoyleSummonTime > 0 and timeSinceGargoyle < 32 then
         should = true
         if timeSinceGargoyle <= 2.5 then
             priority = 4
@@ -757,7 +757,7 @@ function Module:CheckBloodPresence(p)
     local reason = ""
     local priority = 28
 
-    if self.gargoyleSummonTime == 0 or timeSinceGargoyle >= 30 then
+    if self.gargoyleSummonTime == 0 or timeSinceGargoyle >= 32 then
         should = true
         priority = 11.5 -- 优先级高于血打(12)，确保尽快切回红脸
         reason = "无天鬼-切红脸"
