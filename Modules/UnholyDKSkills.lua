@@ -21,6 +21,8 @@ Module.lastPestilenceTime = 0
 Module.lastIcyTouchTime = 0
 Module.lastPlagueStrikeTime = 0
 Module.CurrentQueue = {}
+Module.lastBloodTapReason = ""
+Module.lastBloodTapLogTime = 0
 
 -- 技能ID定义
 local ICY_TOUCH = 49909
@@ -493,26 +495,97 @@ function Module:CheckERW(p)
     self:SetHUDReason("empower_rune_weapon", false, "非大军/无需补")
     return false
 end
+function Module:LogBloodTap(reason)
+    local now = GetTime()
+    if reason ~= self.lastBloodTapReason or (now - self.lastBloodTapLogTime > 2) then
+        self.lastBloodTapReason = reason
+        self.lastBloodTapLogTime = now
+        
+        local curB = self:GetRuneCount(RUNE_BLOOD)
+        local curF = self:GetRuneCount(RUNE_FROST)
+        local curU = self:GetRuneCount(RUNE_UNHOLY)
+        local form = GetShapeshiftForm()
+        local lastType = self.LastCastType
+        
+        local msg = string.format("活力分流推荐: %s | 姿态: %d | 符文: B%d F%d U%d | 上次类型: %s", 
+            reason, form, curB, curF, curU, lastType)
+        
+        -- 如果是补Buff或补病，追加双病时间
+        if reason:find("补Buff") or reason:find("补病") then
+            local ffTime = self:GetDebuffTimeLeft("target", FROST_FEVER)
+            local bpTime = self:GetDebuffTimeLeft("target", BLOOD_PLAGUE)
+            msg = msg .. string.format(" | 双病: F%.1fs B%.1fs", ffTime, bpTime)
+        end
+        
+        HekiliHelper:AddDebugMessage(msg)
+    end
+end
+
 function Module:CheckBloodTap(p)
+    if not self:IsBoss("target") then self:SetHUDReason("blood_tap", false, "非Boss禁用"); return false end
     local ready, reason = self:IsSpellReady(BLOOD_TAP, p)
     if not ready then self:SetHUDReason("blood_tap", false, reason); return false end
 
+    local should = false
+    local recReason = ""
+
+    -- 1. 大军时机 (缺任何一个符文都可以分流来救急)
     if self:IsArmyTime() then
-        if self:GetRuneCount(RUNE_BLOOD) < 1 then
-            self:SetHUDReason("blood_tap", true, "大军时机-分流")
-            return true, "player"
+        if self:GetRuneCount(RUNE_BLOOD) < 1 or self:GetRuneCount(RUNE_FROST) < 1 or self:GetRuneCount(RUNE_UNHOLY) < 1 then
+            should = true
+            recReason = "大军时机-分流"
         end
     end
 
-    if self:GetRuneCount(RUNE_UNHOLY) == 0 and (not self:HasBuff("player", BONE_SHIELD) or not self:HasBuff("pet", GHOUL_FRENZY_BUFF)) then
-        self:SetHUDReason("blood_tap", true, "润滑-补Buff")
+    -- 2. 补Buff
+    if not should and self:GetRuneCount(RUNE_UNHOLY) == 0 then
+        if not self:HasBuff("player", BONE_SHIELD) then
+            should = true
+            recReason = "润滑-补骨盾"
+        elseif self:GetBuffTimeLeft("pet", GHOUL_FRENZY_BUFF) <= 3 then
+            should = true
+            recReason = "润滑-补狂乱"
+        end
+    end
+
+    -- 3. 补病润滑 (仅在疾病断掉且没符文补时触发)
+    if not should then
+        local ffTime = self:GetDebuffTimeLeft("target", FROST_FEVER)
+        local bpTime = self:GetDebuffTimeLeft("target", BLOOD_PLAGUE)
+        if (ffTime <= 0 and self:GetRuneCount(RUNE_FROST) == 0) then
+            should = true
+            recReason = "润滑-补病-冰"
+        elseif (bpTime <= 0 and self:GetRuneCount(RUNE_UNHOLY) == 0) then
+            should = true
+            recReason = "润滑-补病-邪"
+        end
+    end
+
+    -- 4. 切脸润滑
+    if not should then
+        local isUnholyWanted = self:CheckUnholyPresence(p)
+        local isBloodWanted = self:CheckBloodPresence(p)
+
+        if isBloodWanted and GetShapeshiftForm() ~= 1 and self:GetRuneCount(RUNE_BLOOD) == 0 then
+            should = true
+            recReason = "润滑-切红脸"
+            self.BoostPresencePriority = "BLOOD" 
+        elseif isUnholyWanted and GetShapeshiftForm() ~= 3 and self:GetRuneCount(RUNE_UNHOLY) == 0 then
+            should = true
+            recReason = "润滑-切绿脸"
+            self.BoostPresencePriority = "UNHOLY" 
+        end
+    end
+
+    if should then
+        self:SetHUDReason("blood_tap", true, recReason)
+        if HekiliHelper.DebugEnabled then
+            self:LogBloodTap(recReason)
+        end
         return true, "player"
     end
-    local nextType = NextTypeMap[self.LastCastType]
-    if nextType == TYPE_UNHOLY and GetShapeshiftForm() ~= 3 and self:GetRuneCount(RUNE_UNHOLY) == 0 then
-        self:SetHUDReason("blood_tap", true, "润滑-切脸")
-        return true, "player"
-    end
+
+    self.BoostPresencePriority = nil
     self:SetHUDReason("blood_tap", false, "无需分流")
     return false
 end
@@ -527,7 +600,7 @@ function Module:CheckBoneShield(p)
 end
 
 function Module:CheckGhoulFrenzy(p)
-    if self:HasBuff("pet", GHOUL_FRENZY_BUFF) then self:SetHUDReason("ghoul_frenzy", false, "已有狂乱"); return false end
+    if self:GetBuffTimeLeft("pet", GHOUL_FRENZY_BUFF) > 3 then self:SetHUDReason("ghoul_frenzy", false, "狂乱充足"); return false end
     if self:IsBoss("target") and self:GetTTD() < 5 then self:SetHUDReason("ghoul_frenzy", false, "斩杀期跳过"); return false end
     local ready, reason = self:IsSpellReady(GHOUL_FRENZY, p)
     if not ready or not self:CanConsumeRunes(0, 1, 0) then self:SetHUDReason("ghoul_frenzy", false, "冷却/没符文"); return false end
@@ -639,20 +712,31 @@ function Module:CheckUnholyPresence(p)
         return false 
     end
     
+    local should = false
+    local reason = ""
+    local priority = 25
+
     if self.gargoyleSummonTime > 0 and timeSinceGargoyle < 30 then
+        should = true
         if timeSinceGargoyle <= 2.5 then
-            if def then def.basePriority = 4 end
-            self:SetHUDReason("unholy_presence", true, "天鬼快照-紧急切绿")
+            priority = 4
+            reason = "天鬼快照-紧急切绿"
         else
-            if def then def.basePriority = 25 end
-            self:SetHUDReason("unholy_presence", true, "天鬼存在-保持绿脸")
+            priority = 25
+            reason = "天鬼存在-保持绿脸"
         end
-        return true, "player"
     end
 
-    if def then def.basePriority = 25 end
-    self:SetHUDReason("unholy_presence", false, "无天鬼-无需绿脸")
-    return false
+    -- 动态优先级提升：如果活力分流是为了切绿脸而交的
+    if self.BoostPresencePriority == "UNHOLY" then
+        should = true
+        priority = 3 -- 提升至极高优先级，确保死符文被用于切脸
+        reason = "分流润滑-强制切绿"
+    end
+
+    if def then def.basePriority = priority end
+    self:SetHUDReason("unholy_presence", should, reason ~= "" and reason or "无天鬼-无需绿脸")
+    return should, "player"
 end
 
 function Module:CheckBloodPresence(p)
@@ -669,15 +753,26 @@ function Module:CheckBloodPresence(p)
         return false 
     end
 
+    local should = false
+    local reason = ""
+    local priority = 28
+
     if self.gargoyleSummonTime == 0 or timeSinceGargoyle >= 30 then
-        if def then def.basePriority = 28 end
-        self:SetHUDReason("blood_presence", true, "无天鬼-切红脸")
-        return true, "player"
+        should = true
+        priority = 28
+        reason = "无天鬼-切红脸"
     end
 
-    if def then def.basePriority = 28 end
-    self:SetHUDReason("blood_presence", false, "天鬼存在-无需红脸")
-    return false
+    -- 动态优先级提升：如果活力分流是为了切红脸而交的
+    if self.BoostPresencePriority == "BLOOD" then
+        should = true
+        priority = 3 -- 提升至极高优先级
+        reason = "分流润滑-强制切红"
+    end
+
+    if def then def.basePriority = priority end
+    self:SetHUDReason("blood_presence", should, reason ~= "" and reason or "天鬼存在-无需红脸")
+    return should, "player"
 end
 
 function Module:CheckPestilence(p)
@@ -837,6 +932,10 @@ end
 function Module:InsertUnholySkills()
     if self.HUDFrame then if HekiliHelper.DebugEnabled then self.HUDFrame:Show() else self.HUDFrame:Hide() end end
     if not Hekili or not Hekili.DisplayPool then return end
+    
+    -- 每帧开始计算前，必须重置动态优先级标记，防止切脸死循环
+    self.BoostPresencePriority = nil
+    
     self:UpdateTTD()
     local db = HekiliHelper.DB and HekiliHelper.DB.profile and HekiliHelper.DB.profile.unholyDK
     local isEnabled = db and db.enabled
