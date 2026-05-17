@@ -11,7 +11,7 @@ end
 local Module = HekiliHelper.UnholyDKSkills
 
 -- 状态跟踪
-Module.ttdData = { lastHP = 0, lastTime = 0, ttd = 999, guid = nil }
+Module.ttdData = {} -- 修改为支持多目标的表 [guid] = { lastHP, lastTime, ttd }
 Module.HUDData = {}
 Module.LastCastType = "BLOOD" -- 初始设为 BLOOD，使第一个推荐为 FROST
 Module.EventFrame = nil
@@ -222,7 +222,7 @@ function Module:UpdateHUDText()
 
     table.insert(lines, "----------------------")
     table.insert(lines, string.format("|cFFFFFF00[全局状态]|r"))
-    table.insert(lines, string.format("冰:%d  邪:%d  血:%d (含万能)", curF, curU, curB))
+    table.insert(lines, string.format("|cFF00FFFF冰:%d|r  |cFF00FF00邪:%d|r  |cFFFF0000血:%d|r (含万能)", curF, curU, curB))
     table.insert(lines, string.format("能量: %d  TTD: %.1fs", UnitPower("player"), self:GetTTD()))
     table.insert(lines, string.format("序列: %s (Last:%s)", seqStr, self.LastCastType))
     
@@ -255,33 +255,38 @@ function Module:GetUnitRange(unit)
     return nil, nil
 end
 
-function Module:UpdateTTD()
-    local guid = UnitGUID("target")
-    if not guid then 
-        self.ttdData.ttd = 999
-        self.ttdData.guid = nil
-        return 
-    end
-    local hp = UnitHealth("target")
+function Module:UpdateTTD(unit)
+    unit = unit or "target"
+    local guid = UnitGUID(unit)
+    if not guid then return end
+    
+    local hp = UnitHealth(unit)
     local now = GetTime()
-    if self.ttdData.guid ~= guid then
-        self.ttdData.guid = guid
-        self.ttdData.lastHP = hp
-        self.ttdData.lastTime = now
-        self.ttdData.ttd = 999
+    local data = self.ttdData[guid]
+    
+    if not data then
+        self.ttdData[guid] = { lastHP = hp, lastTime = now, ttd = 999 }
     else
-        local diff = self.ttdData.lastHP - hp
-        local timeDiff = now - self.ttdData.lastTime
-        if timeDiff >= 1 and diff > 0 then
-            local ps = diff / timeDiff
-            self.ttdData.ttd = hp / ps
-            self.ttdData.lastHP = hp
-            self.ttdData.lastTime = now
+        local diff = data.lastHP - hp
+        local timeDiff = now - data.lastTime
+        if timeDiff >= 1 then
+            if diff > 0 then
+                local ps = diff / timeDiff
+                data.ttd = hp / ps
+            end
+            data.lastHP = hp
+            data.lastTime = now
         end
     end
 end
 
-function Module:GetTTD() return self.ttdData.ttd end
+function Module:GetUnitTTD(unit)
+    local guid = UnitGUID(unit)
+    if not guid or not self.ttdData[guid] then return 999 end
+    return self.ttdData[guid].ttd
+end
+
+function Module:GetTTD() return self:GetUnitTTD("target") end
 
 function Module:IsValidEnemy(unit)
     unit = unit or "target"
@@ -298,15 +303,27 @@ end
 
 function Module:CountEnemiesInRange(range)
     local count = 0
+    -- 清理过期的 TTD 数据 (超过 10 秒没更新的)
+    local now = GetTime()
+    for guid, data in pairs(self.ttdData) do
+        if now - data.lastTime > 10 then self.ttdData[guid] = nil end
+    end
+
     if self:IsValidEnemy("target") then
         local _, maxR = self:GetUnitRange("target")
-        if maxR and maxR <= range then count = count + 1 end
+        if maxR and maxR <= range then 
+            self:UpdateTTD("target")
+            count = count + 1 
+        end
     end
     for i = 1, 40 do
         local unit = "nameplate"..i
         if self:IsValidEnemy(unit) and not UnitIsUnit(unit, "target") then
             local _, maxR = self:GetUnitRange(unit)
-            if maxR and maxR <= range then count = count + 1 end
+            if maxR and maxR <= range then
+                self:UpdateTTD(unit)
+                count = count + 1
+            end
         end
     end
     return count
@@ -399,7 +416,7 @@ function Module:IsArmyTime()
     if not self:HasBuff("player", 2825) and not self:HasBuff("player", 32182) then return false, "等待嗜血" end
     
     local db = HekiliHelper.DB.profile.unholyDK
-    local buffs = { strsplit(",", (db and db.armySnapshotBuffs or ""):gsub("%s+", "")) }
+    local buffs = self:GetBuffList(db and db.armySnapshotBuffs or "")
     for _, b in ipairs(buffs) do
         if b ~= "" and not (tonumber(b) and self:HasBuff("player", tonumber(b)) or self:HasBuffByName("player", b)) then
             return false, "等待快照:"..b
@@ -591,11 +608,12 @@ end
 
 function Module:CheckBloodStrike(p)
     if NextTypeMap[self.LastCastType] ~= TYPE_BLOOD then self:SetHUDReason("blood_strike", false, "等待序列"); return false end
-    if self:CountEnemiesInRange(8) > 1 then self:SetHUDReason("blood_strike", false, "AOE禁用"); return false end
+    -- 核心逻辑：如果没有孤寂，或者孤寂即将到期，则必须打血打（即使在 AOE 情况下）
     if self:GetBuffTimeLeft("player", DESOLATION_BUFF) > 5 then self:SetHUDReason("blood_strike", false, "孤寂充足"); return false end
+    
     local ready, reason = self:IsSpellReady(BLOOD_STRIKE, p)
     local canCast = ready and self:CanConsumeRunes(1, 0, 0)
-    self:SetHUDReason("blood_strike", canCast, canCast and "已就绪" or "无符文/CD")
+    self:SetHUDReason("blood_strike", canCast, canCast and "维持孤寂" or "无符文/CD")
     return canCast, "target"
 end
 
@@ -663,22 +681,56 @@ function Module:CheckBloodPresence(p)
 end
 
 function Module:CheckPestilence(p)
+    -- 1. 范围检查
     if self:CountEnemiesInRange(8) <= 1 then self:SetHUDReason("pestilence", false, "单体禁用"); return false end
+    
+    -- 2. 检查主目标是否有病可传 (必须双病齐全)
+    local tFF = self:GetDebuffTimeLeft("target", FROST_FEVER)
+    local tBP = self:GetDebuffTimeLeft("target", BLOOD_PLAGUE)
+    if tFF <= 1.5 or tBP <= 1.5 then self:SetHUDReason("pestilence", false, "主目标缺病/快到期"); return false end
+
+    -- 3. 序列检查
     if NextTypeMap[self.LastCastType] ~= TYPE_BLOOD then self:SetHUDReason("pestilence", false, "等待血阶段"); return false end
-    if self.lastPestilenceTime > math.max(self.lastIcyTouchTime, self.lastPlagueStrikeTime) then self:SetHUDReason("pestilence", false, "已传染"); return false end
+    
+    -- 4. 扫描周边敌人，寻找“值得传染”的目标
+    -- 逻辑：只要有一个周边敌人缺病且 TTD > 5s，就传染
+    local foundValidSecondary = false
+    for i = 1, 40 do
+        local u = "nameplate"..i
+        if self:IsValidEnemy(u) and not UnitIsUnit(u, "target") then
+            local _, maxR = self:GetUnitRange(u)
+            if maxR and maxR <= 8 then
+                local ff = self:GetDebuffTimeLeft(u, FROST_FEVER)
+                local bp = self:GetDebuffTimeLeft(u, BLOOD_PLAGUE)
+                
+                if ff <= 1.5 or bp <= 1.5 then
+                    -- 存活判定：Boss 必传；普通怪 TTD > 5s
+                    if self:IsBoss(u) or (self:GetUnitTTD(u) > 5) then
+                        foundValidSecondary = true
+                        break
+                    end
+                end
+            end
+        end
+    end
+    
+    if not foundValidSecondary then self:SetHUDReason("pestilence", false, "无需扩散/周边将死"); return false end
+
+    -- 5. 资源检查
     local ready, reason = self:IsSpellReady(PESTILENCE, p)
     local canCast = ready and self:CanConsumeRunes(1, 0, 0)
-    self:SetHUDReason("pestilence", canCast, canCast and "已就绪" or "无符文/CD")
+    self:SetHUDReason("pestilence", canCast, canCast and "扩散疾病" or "无符文/CD")
     return canCast, "target"
 end
 
 function Module:CheckBloodBoil(p)
-    local e8 = self:CountEnemiesInRange(8)
-    if e8 <= 1 and self:GetBuffTimeLeft("player", DESOLATION_BUFF) <= 5 then self:SetHUDReason("blood_boil", false, "需优先打血打"); return false end
     if NextTypeMap[self.LastCastType] ~= TYPE_BLOOD then self:SetHUDReason("blood_boil", false, "等待序列"); return false end
+    -- 核心逻辑：只有在孤寂 Buff 充足时，才把血符文花在血沸上
+    if self:GetBuffTimeLeft("player", DESOLATION_BUFF) <= 5 then self:SetHUDReason("blood_boil", false, "需优先打血打"); return false end
+
     local ready, reason = self:IsSpellReady(BLOOD_BOIL, p)
     local canCast = ready and self:CanConsumeRunes(1, 0, 0)
-    self:SetHUDReason("blood_boil", canCast, canCast and "已就绪" or "无符文/CD")
+    self:SetHUDReason("blood_boil", canCast, canCast and "消耗血符文" or "无符文/CD")
     return canCast, "player"
 end
 
@@ -699,8 +751,16 @@ function Module:CheckGargoyle(p)
     if not self:IsBoss("target") then self:SetHUDReason("summon_gargoyle", false, "非Boss"); return false end
     local ready, reason = self:IsSpellReady(SUMMON_GARGOYLE, p)
     if not ready or UnitPower("player") < 60 or self:GetTTD() < 20 then self:SetHUDReason("summon_gargoyle", false, reason or "条件不足"); return false end
+    
+    -- 嗜血/英勇强制逻辑：如果嗜血剩余时间 <= 30秒，无视快照直接召唤
+    local bloodlustTime = math.max(self:GetBuffTimeLeft("player", 2825), self:GetBuffTimeLeft("player", 32182))
+    if bloodlustTime > 0 and bloodlustTime <= 30 then
+        self:SetHUDReason("summon_gargoyle", true, "嗜血即将结束-强制")
+        return true, "player"
+    end
+
     local db = HekiliHelper.DB.profile.unholyDK
-    local buffs = { strsplit(",", (db and db.gargoyleSnapshotBuffs or ""):gsub("%s+", "")) }
+    local buffs = self:GetBuffList(db and db.gargoyleSnapshotBuffs or "")
     for _, b in ipairs(buffs) do
         if b ~= "" and not (tonumber(b) and self:HasBuff("player", tonumber(b)) or self:HasBuffByName("player", b)) then
             self:SetHUDReason("summon_gargoyle", false, "等待快照:"..b); return false
@@ -735,7 +795,7 @@ function Module:CheckDeathCoil(p)
     
     local rp = UnitPower("player")
     
-    if rp > 80 then
+    if rp >= 100 then
         if def then def.basePriority = 9.5 end
         self:SetHUDReason("death_coil", true, "高能泄泻")
         return true, "target"
@@ -752,6 +812,22 @@ end
 function Module:HasBuffByName(unit, name)
     for i = 1, 40 do local n = UnitBuff(unit, i); if n == name then return true end end
     return false
+end
+
+function Module:GetBuffList(str)
+    if not str or str == "" then return {} end
+    local buffs = {}
+    if str:find(",") then
+        for s in str:gmatch("[^,]+") do
+            s = s:gsub("^%s*(.-)%s*$", "%1")
+            if s ~= "" then table.insert(buffs, s) end
+        end
+    else
+        for s in str:gmatch("%S+") do
+            table.insert(buffs, s)
+        end
+    end
+    return buffs
 end
 
 -- ============================================
@@ -778,6 +854,7 @@ function Module:InsertUnholySkills()
     self.CurrentQueue = {}
     table.sort(activeSkills, function(a, b) return a.basePriority < b.basePriority end)
     
+    local hudPopulated = false
     if isEnabled then
         for dispName, UI in pairs(Hekili.DisplayPool) do
             local lowerName = dispName:lower()
@@ -814,10 +891,14 @@ function Module:InsertUnholySkills()
                                 
                                 Queue[skillsFound] = slot
                                 UI.NewRecommendations = true
-                                table.insert(self.CurrentQueue, { slot = skillsFound, name = skillDef.displayName })
+                                
+                                if not hudPopulated then
+                                    table.insert(self.CurrentQueue, { slot = skillsFound, name = skillDef.displayName })
+                                end
                             end
                         end
                     end
+                    hudPopulated = true
                 end
             end
         end
