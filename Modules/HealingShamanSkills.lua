@@ -16,6 +16,17 @@ local Module = HekiliHelper.HealingShamanSkills
 function Module:Initialize()
     if not Hekili or not Hekili.Update then return false end
 
+    self.lastActionTime = GetTime()
+
+    -- 注册事件以追踪玩家手动施法
+    if not self.eventFrame then
+        self.eventFrame = CreateFrame("Frame")
+        self.eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+        self.eventFrame:SetScript("OnEvent", function(f, event, unit, ...)
+            self.lastActionTime = GetTime()
+        end)
+    end
+
     -- Hook Hekili.Update
     local success = HekiliHelper.HookUtils.Wrap(Hekili, "Update", function(oldFunc, self, ...)
         local result = oldFunc(self, ...)
@@ -41,6 +52,7 @@ end
 -- 大地之盾 Rank 5: 49284
 
 Module.SkillDefinitions = {
+    { actionName = "ancestral_spirit", spellID = 2008, priority = 0.5, checkFunc = function(self) return self:CheckResurrection() end, displayName = "先祖之魂" },
     { actionName = "water_shield", spellID = 57960, priority = 1, checkFunc = function(self) return self:CheckWaterShield() end, displayName = "水之护盾" },
     { actionName = "earthliving_weapon", spellID = 51994, priority = 2, checkFunc = function(self) return self:CheckEarthlivingWeapon() end, displayName = "大地生命武器" },
     { actionName = "earth_shield", spellID = 49284, priority = 3, checkFunc = function(self) return self:CheckEarthShield() end, displayName = "大地之盾" },
@@ -51,6 +63,43 @@ Module.SkillDefinitions = {
     { actionName = "chain_heal", spellID = 49273, priority = 6, checkFunc = function(self) return self:CheckChainHeal() end, displayName = "治疗链" },
     { actionName = "lesser_healing_wave", spellID = 49276, priority = 7, checkFunc = function(self) return self:CheckLesserHealingWave() end, displayName = "次级治疗波" },
 }
+
+function Module:CheckResurrection()
+    if InCombatLockdown() then return false end
+    if self:IsEatingOrDrinking() then return false end
+
+    local targetUnit = self:GetDeadTarget()
+    if not targetUnit then return false end
+
+    -- 检查距离 (30码)
+    local minRange, maxRange = self:GetUnitRange(targetUnit)
+    if maxRange and maxRange > 30 then return false end
+    
+    -- 检查可视
+    if not UnitIsVisible(targetUnit) then return false end
+
+    return true, targetUnit
+end
+
+function Module:IsEatingOrDrinking()
+-- ... (rest of the function)
+    for i = 1, 40 do
+        local name, _, _, _, _, _, _, _, _, spellId = UnitBuff("player", i)
+        if not name then break end
+        -- 常用吃喝 Buff 检查
+        if name:find("进食") or name:find("饮水") or name:find("进餐") or 
+           name:find("Food") or name:find("Drink") or name:find("Refreshment") then
+            return true
+        end
+    end
+    return false
+end
+
+function Module:GetDeadTarget()
+    if UnitExists("mouseover") and UnitIsFriend("player", "mouseover") and UnitIsDead("mouseover") then return "mouseover" end
+    if UnitExists("target") and UnitIsFriend("player", "target") and UnitIsDead("target") then return "target" end
+    return nil
+end
 
 function Module:CheckChainHeal()
     local targetUnit = self:GetBestTarget()
@@ -104,7 +153,8 @@ function Module:CheckEarthShield()
         if not isUsable and not noMana then return false end
 
         -- 检查距离
-        if IsSpellInRange(GetSpellInfo(49284), "focus") ~= 1 then return false end
+        local minRange, maxRange = self:GetUnitRange("focus")
+        if maxRange and maxRange > 40 then return false end
 
         -- 遍历焦点目标身上的buff，高容错检查是否有大地之盾
         local hasEarthShield = false
@@ -129,6 +179,19 @@ function Module:CheckEarthShield()
 
     -- 如果没有焦点，或者焦点不是友方/已死亡，绝对不触发
     return false
+end
+
+function Module:GetUnitRange(unit)
+    unit = unit or "target"
+    if not UnitExists(unit) then return nil, nil end
+
+    -- 使用与 RangeDisplay 相同的 LibRangeCheck-3.0
+    local rc = LibStub("LibRangeCheck-3.0", true) or LibStub("LibRangeCheck-2.0", true)
+    if rc then
+        return rc:GetRange(unit)
+    end
+
+    return nil, nil
 end
 
 function Module:CheckHealingWave()
@@ -259,34 +322,67 @@ function Module:InsertHealingSkills()
         if (lowerName == "primary" or lowerName == "aoe") and UI.Active and UI.alpha > 0 then
             local Queue = UI.Recommendations
             if not Queue then return end
+
+            local foundAction = false
             for _, skillDef in ipairs(self.SkillDefinitions) do
                 if self:IsLearned(skillDef.displayName, skillDef.spellID) then
                     local should, target = skillDef.checkFunc(self)
                     if should then
-                        local ability = self:GetSkillFromHekili(skillDef.actionName)        
-                        if not ability then
-                            local n, _, t = GetSpellInfo(skillDef.spellID)
-                            Hekili.Class.abilities[skillDef.actionName] = { key = skillDef.actionName, name = n, texture = t, id = skillDef.spellID, cast = 0, gcd = "off" }
-                            ability = Hekili.Class.abilities[skillDef.actionName]
-                        end
-                        Queue[1] = Queue[1] or {}
-                        if not Queue[1].isHealingShamanSkill then
-                            Queue[1].originalRecommendation = {}
-                            for k, v in pairs(Queue[1]) do Queue[1].originalRecommendation[k] = v end
-                        end
-                        local slot = Queue[1]
-                        slot.actionName = skillDef.actionName
-                        slot.actionID = skillDef.spellID
-                        slot.texture = ability.texture
-                        slot.isHealingShamanSkill = true
-                        slot.display = dispName
-                        slot.time = 0
-                        slot.exact_time = GetTime()
-                        UI.NewRecommendations = true
+                        self:InjectSkill(Queue, UI, dispName, skillDef)
+                        foundAction = true
+                        self.lastActionTime = GetTime() -- 更新动作时间
                         break
                     end
                 end
             end
+
+            -- 如果没有推荐任何技能，且在战斗中超过 4.5 秒，强制推荐治疗链
+            if not foundAction then
+                if InCombatLockdown() then
+                    if GetTime() - (self.lastActionTime or 0) > 4.5 then
+                        local chainHealDef
+                        for _, def in ipairs(self.SkillDefinitions) do
+                            if def.actionName == "chain_heal" then
+                                chainHealDef = def
+                                break
+                            end
+                        end
+                        
+                        if chainHealDef and self:IsLearned(chainHealDef.displayName, chainHealDef.spellID) then
+                            self:InjectSkill(Queue, UI, dispName, chainHealDef, true)
+                        end
+                    end
+                else
+                    -- 非战斗状态不断重置时间，确保进入战斗时从 0 开始计算
+                    self.lastActionTime = GetTime()
+                end
+            end
         end
     end
+end
+
+function Module:InjectSkill(Queue, UI, dispName, skillDef, isForced)
+    local ability = self:GetSkillFromHekili(skillDef.actionName)        
+    if not ability then
+        local n, _, t = GetSpellInfo(skillDef.spellID)
+        Hekili.Class.abilities[skillDef.actionName] = { key = skillDef.actionName, name = n, texture = t, id = skillDef.spellID, cast = 0, gcd = "off" }
+        ability = Hekili.Class.abilities[skillDef.actionName]
+    end
+
+    Queue[1] = Queue[1] or {}
+    if not Queue[1].isHealingShamanSkill then
+        Queue[1].originalRecommendation = {}
+        for k, v in pairs(Queue[1]) do Queue[1].originalRecommendation[k] = v end
+    end
+
+    local slot = Queue[1]
+    slot.actionName = skillDef.actionName
+    slot.actionID = skillDef.spellID
+    slot.texture = ability.texture
+    slot.isHealingShamanSkill = true
+    slot.isForcedRecommendation = isForced or false
+    slot.display = dispName
+    slot.time = 0
+    slot.exact_time = GetTime()
+    UI.NewRecommendations = true
 end

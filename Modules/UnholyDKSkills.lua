@@ -41,6 +41,7 @@ local EMPOWER_RUNE_WEAPON = 47568
 local ARMY_OF_THE_DEAD = 42650
 local GHOUL_FRENZY = 63560
 local RAISE_DEAD = 46584
+local MIND_FREEZE = 47528
 
 -- 姿态/脸 (Presence)
 local BLOOD_PRESENCE = 48263
@@ -75,7 +76,7 @@ local SpellToType = {
     [BONE_SHIELD] = TYPE_FILLER,
     [UNHOLY_PRESENCE] = TYPE_FILLER,
     [SCOURGE_STRIKE] = TYPE_UNHOLY,
-    [DEATH_AND_DECAY] = TYPE_UNHOLY,
+    [DEATH_AND_DECAY] = TYPE_BLOOD,
     [BLOOD_STRIKE] = TYPE_BLOOD,
     [PESTILENCE] = TYPE_BLOOD,
     [BLOOD_BOIL] = TYPE_BLOOD,
@@ -292,7 +293,13 @@ function Module:GetTTD() return self:GetUnitTTD("target") end
 
 function Module:IsValidEnemy(unit)
     unit = unit or "target"
-    return UnitExists(unit) and not UnitIsFriend("player", unit) and not UnitIsDead(unit)
+    if not UnitExists(unit) or UnitIsFriend("player", unit) or UnitIsDead(unit) then return false end
+    
+    -- 图腾过滤：如果名称包含“图腾”，则视为无效敌对目标
+    local name = UnitName(unit)
+    if name and name:find("图腾") then return false end
+    
+    return true
 end
 
 function Module:IsBoss(unit)
@@ -350,10 +357,10 @@ function Module:IsSpellReady(id, p, ignoreGCD)
     local _, gD = GetSpellCooldown(61304)
     
     local isRuneSpell = (id == ICY_TOUCH or id == PLAGUE_STRIKE or id == SCOURGE_STRIKE or 
-                         id == BLOOD_STRIKE or id == BLOOD_BOIL or id == PESTILENCE or id == DEATH_AND_DECAY)
+                         id == BLOOD_STRIKE or id == BLOOD_BOIL or id == PESTILENCE or id == DEATH_AND_DECAY or id == ARMY_OF_THE_DEAD)
 
     if isRuneSpell then
-        if id ~= DEATH_AND_DECAY then
+        if id ~= DEATH_AND_DECAY and id ~= ARMY_OF_THE_DEAD then
             if not ignoreGCD and gD and gD > 0 and d > 0 and d <= gD then
                 return true, "GCD中"
             end
@@ -439,6 +446,9 @@ end
 -- ============================================
 
 Module.SkillDefinitions = {
+    -- 工具类 (最高优先级)
+    { actionName = "mind_freeze",         spellID = MIND_FREEZE,         basePriority = 0.1, checkFunc = function(self, p) return self:CheckMindFreeze(p) end,     displayName = "心灵冰冻" },
+
     -- 基础维护 (最高优先级)
     { actionName = "raise_dead",          spellID = RAISE_DEAD,          basePriority = 0.5, checkFunc = function(self, p) return self:CheckRaiseDead(p) end,     displayName = "亡者复生" },
     
@@ -473,6 +483,27 @@ Module.SkillDefinitions = {
     { actionName = "horn_of_winter", spellID = HORN_OF_WINTER, basePriority = 29, checkFunc = function(self, p) return self:CheckHornOfWinter(p) end, displayName = "寒冬号角" },
     { actionName = "death_coil",     spellID = DEATH_COIL,     basePriority = 30, checkFunc = function(self, p) return self:CheckDeathCoil(p) end,    displayName = "凋零缠绕" },
 }
+
+function Module:CheckMindFreeze(p)
+    if not self:IsBoss("target") then self:SetHUDReason("mind_freeze", false, "非Boss"); return false end
+    
+    local ready, reason = self:IsSpellReady(MIND_FREEZE, p, true) -- 忽略GCD，因为心灵冰冻不在GCD内
+    if not ready then self:SetHUDReason("mind_freeze", false, reason); return false end
+
+    -- 检查是否正在施法且可打断
+    local name, _, _, _, _, _, _, notInterruptible = UnitCastingInfo("target")
+    if not name then
+        name, _, _, _, _, _, _, notInterruptible = UnitChannelInfo("target")
+    end
+
+    if name and not notInterruptible then
+        self:SetHUDReason("mind_freeze", true, "打断 Boss: "..name)
+        return true, "target"
+    end
+
+    self:SetHUDReason("mind_freeze", false, "无施法/不可打断")
+    return false
+end
 
 function Module:CheckRaiseDead(p)
     if UnitExists("pet") and not UnitIsDead("pet") then self:SetHUDReason("raise_dead", false, "已有宠物"); return false end
@@ -613,22 +644,38 @@ function Module:CheckDnD(p)
     if not ready then self:SetHUDReason("death_and_decay", false, reason); return false end
     if not self:CanConsumeRunes(1, 1, 1) then self:SetHUDReason("death_and_decay", false, "缺少符文"); return false end
     
+    -- 距离检查：确保目标在近战范围内 (LibRangeCheck 近战 bucket 的 maxR 通常为 5)
+    if self:IsValidEnemy("target") then
+        local _, maxR = self:GetUnitRange("target")
+        if maxR and maxR > 5 then
+            self:SetHUDReason("death_and_decay", false, "距离过远(>5码)")
+            return false
+        end
+    end
+
     if self:CountEnemiesInRange(8) > 1 and not self:IsBoss("target") then 
         self:SetHUDReason("death_and_decay", true, "AOE优先")
         return true, "player" 
     end
     
-    -- 单体/Boss战序列逻辑：必须双病齐全才能打凋零
+    -- 单体/Boss战序列逻辑：必须双病齐全 且 孤寂Buff存在，且都有一定剩余时间
     local frostFeverLeft = self:GetDebuffTimeLeft("target", FROST_FEVER)
     local bloodPlagueLeft = self:GetDebuffTimeLeft("target", BLOOD_PLAGUE)
-    if frostFeverLeft <= 0 or bloodPlagueLeft <= 0 then
-        self:SetHUDReason("death_and_decay", false, "等待双病")
+    local desolationLeft = self:GetBuffTimeLeft("player", DESOLATION_BUFF)
+
+    if frostFeverLeft <= 1.5 or bloodPlagueLeft <= 1.5 then
+        self:SetHUDReason("death_and_decay", false, "疾病即将到期/缺失")
         return false
     end
 
-    local should = NextTypeMap[self.LastCastType] == TYPE_UNHOLY
-    self:SetHUDReason("death_and_decay", should, should and "序列推荐" or "等待序列")
-    return should, "player"
+    if desolationLeft <= 1.5 then
+        self:SetHUDReason("death_and_decay", false, "孤寂即将到期/缺失")
+        return false
+    end
+
+    -- 移除序列检查，好了就用
+    self:SetHUDReason("death_and_decay", true, "好了就用")
+    return true, "player"
 end
 
 function Module:CheckIcyTouch(p)
@@ -776,7 +823,7 @@ function Module:CheckBloodPresence(p)
 end
 
 function Module:CheckPestilence(p)
-    -- 1. 范围检查
+    -- 1. 范围检查 (严格按照要求设为 8 码)
     if self:CountEnemiesInRange(8) <= 1 then self:SetHUDReason("pestilence", false, "单体禁用"); return false end
     
     -- 2. 检查主目标是否有病可传 (必须双病齐全)
@@ -784,22 +831,24 @@ function Module:CheckPestilence(p)
     local tBP = self:GetDebuffTimeLeft("target", BLOOD_PLAGUE)
     if tFF <= 1.5 or tBP <= 1.5 then self:SetHUDReason("pestilence", false, "主目标缺病/快到期"); return false end
 
+    -- 必须孤寂安全 (降低为 3s)
+    if self:GetBuffTimeLeft("player", DESOLATION_BUFF) <= 3 then self:SetHUDReason("pestilence", false, "需优先血打补孤寂"); return false end
+
     -- 3. 序列检查
     if NextTypeMap[self.LastCastType] ~= TYPE_BLOOD then self:SetHUDReason("pestilence", false, "等待血阶段"); return false end
     
     -- 4. 扫描周边敌人，寻找“值得传染”的目标
-    -- 逻辑：只要有一个周边敌人缺病且 TTD > 5s，就传染
     local foundValidSecondary = false
     for i = 1, 40 do
         local u = "nameplate"..i
         if self:IsValidEnemy(u) and not UnitIsUnit(u, "target") then
             local _, maxR = self:GetUnitRange(u)
-            if maxR and maxR <= 8 then
+            if maxR and maxR <= 8 then -- 严格 8 码
                 local ff = self:GetDebuffTimeLeft(u, FROST_FEVER)
                 local bp = self:GetDebuffTimeLeft(u, BLOOD_PLAGUE)
                 
                 if ff <= 1.5 or bp <= 1.5 then
-                    -- 存活判定：Boss 必传；普通怪 TTD > 5s
+                    -- 存活判定：非 Boss 必须判断 TTD > 5s
                     if self:IsBoss(u) or (self:GetUnitTTD(u) > 5) then
                         foundValidSecondary = true
                         break
@@ -820,8 +869,9 @@ end
 
 function Module:CheckBloodBoil(p)
     if NextTypeMap[self.LastCastType] ~= TYPE_BLOOD then self:SetHUDReason("blood_boil", false, "等待序列"); return false end
-    -- 核心逻辑：只有在孤寂 Buff 充足时，才把血符文花在血沸上
-    if self:GetBuffTimeLeft("player", DESOLATION_BUFF) <= 5 then self:SetHUDReason("blood_boil", false, "需优先打血打"); return false end
+    
+    -- 核心逻辑：只有在孤寂 Buff 充足时 (降低为 3s)，才把血符文花在血沸上
+    if self:GetBuffTimeLeft("player", DESOLATION_BUFF) <= 3 then self:SetHUDReason("blood_boil", false, "需优先打血打"); return false end
 
     local ready, reason = self:IsSpellReady(BLOOD_BOIL, p)
     local canCast = ready and self:CanConsumeRunes(1, 0, 0)
