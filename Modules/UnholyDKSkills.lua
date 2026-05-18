@@ -27,7 +27,6 @@ Module.lastBloodTapLogTime = 0
 -- 技能ID定义
 local ICY_TOUCH = 49909
 local PLAGUE_STRIKE = 49921
-local SCOURGE_STRIKE = 55271
 local BLOOD_STRIKE = 49930
 local BLOOD_BOIL = 49941
 local DEATH_COIL = 49895
@@ -75,7 +74,6 @@ local SpellToType = {
     [GHOUL_FRENZY] = TYPE_FILLER,
     [BONE_SHIELD] = TYPE_FILLER,
     [UNHOLY_PRESENCE] = TYPE_FILLER,
-    [SCOURGE_STRIKE] = TYPE_UNHOLY,
     [DEATH_AND_DECAY] = TYPE_BLOOD,
     [BLOOD_STRIKE] = TYPE_BLOOD,
     [PESTILENCE] = TYPE_BLOOD,
@@ -356,7 +354,7 @@ function Module:IsSpellReady(id, p, ignoreGCD)
     local s, d = GetSpellCooldown(id)
     local _, gD = GetSpellCooldown(61304)
     
-    local isRuneSpell = (id == ICY_TOUCH or id == PLAGUE_STRIKE or id == SCOURGE_STRIKE or 
+    local isRuneSpell = (id == ICY_TOUCH or id == PLAGUE_STRIKE or 
                          id == BLOOD_STRIKE or id == BLOOD_BOIL or id == PESTILENCE or id == DEATH_AND_DECAY or id == ARMY_OF_THE_DEAD)
 
     if isRuneSpell then
@@ -706,16 +704,6 @@ function Module:CheckPlagueStrike(p)
     local ready, reason = self:IsSpellReady(PLAGUE_STRIKE, p)
     local hasRunes = self:CanConsumeRunes(0, 1, 0)
 
-    if self:GetDebuffTimeLeft("target", BLOOD_PLAGUE) <= 0 then
-        if ready and hasRunes then 
-            self:SetHUDReason("plague_strike", true, "无疾病强制")
-            return true, "target" 
-        elseif not hasRunes then
-            self:SetHUDReason("plague_strike", false, "需强制-缺符文")
-            return false
-        end
-    end
-
     if NextTypeMap[self.LastCastType] ~= TYPE_UNHOLY then 
         self:SetHUDReason("plague_strike", false, "等待序列")
         return false 
@@ -735,14 +723,6 @@ function Module:CheckBloodStrike(p)
     local canCast = ready and self:CanConsumeRunes(1, 0, 0)
     self:SetHUDReason("blood_strike", canCast, canCast and "维持孤寂" or "无符文/CD")
     return canCast, "target"
-end
-
-function Module:CheckScourgeStrike(p)
-    if NextTypeMap[self.LastCastType] ~= TYPE_UNHOLY then self:SetHUDReason("scourge_strike", false, "等待序列"); return false end
-    local ready, reason = self:IsSpellReady(SCOURGE_STRIKE, p)
-    local should = ready and self:CanConsumeRunes(0, 1, 1)
-    self:SetHUDReason("scourge_strike", should, should and "泄符文" or reason)
-    return should, "target"
 end
 
 function Module:CheckUnholyPresence(p)
@@ -948,10 +928,31 @@ function Module:CheckDeathCoil(p)
     
     if def then def.basePriority = 30 end
     
-    if rp < 40 then self:SetHUDReason("death_coil", false, "能量不足"); return false end
-    if self:GetRuneCount(RUNE_BLOOD) == 0 and self:GetRuneCount(RUNE_UNHOLY) == 0 and self:GetRuneCount(RUNE_FROST) == 0 then self:SetHUDReason("death_coil", true, "真空填充"); return true, "target" end
+    local isVacuum = self:GetRuneCount(RUNE_BLOOD) == 0 and self:GetRuneCount(RUNE_UNHOLY) == 0 and self:GetRuneCount(RUNE_FROST) == 0
+    if not isVacuum then
+        self:SetHUDReason("death_coil", false, "尚有符文")
+        return false
+    end
+
+    local s, d = GetSpellCooldown(SUMMON_GARGOYLE)
+    local gOnCD = (s and s > 0 and d > 1.5)
     
-    self:SetHUDReason("death_coil", false, "低优先级"); return false
+    local threshold = 80
+    if gOnCD then
+        if self:IsBoss("target") then
+            threshold = 60
+        else
+            threshold = 40
+        end
+    end
+
+    if rp >= threshold then
+        self:SetHUDReason("death_coil", true, "真空填充(>="..threshold..")")
+        return true, "target"
+    end
+    
+    self:SetHUDReason("death_coil", false, "能量不足(<"..threshold..")")
+    return false
 end
 
 function Module:HasBuffByName(unit, name)
